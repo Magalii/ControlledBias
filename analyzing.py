@@ -325,86 +325,6 @@ def plot_by_bias(metrics_by_bias, all_bias: list[float], plot_style: str = 'SIMP
         plt.show()
     plt.close()
 
-def plot_by_metric(retrieval_path:str, dataset_list=['student','OULADstem', 'OULADsocial'], metric_list=['acc','StatParity','EqqOddsDiff','GenEntropyIndex'], bias_list=['label','selectDoubleProp'],preproc_list=['', 'reweighting','massaging'],ylim:list[float]=None, xlim:list[float]=None, all_bias:list[float]=[0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9], plot_style: str = 'SIMPLE_PLOT', title: str = '', path_start:str = None, display=False) :
-    """
-    plot_style : string, optional
-        'SIMPLE_PLOT' for choice of metrics displaid without standard deviation
-        'FILLED_STDEV' for choice of metrics displaid with standard deviation as colored area arround the curve
-    """
-
-    metrics_all = {}
-    for ds in dataset_list :
-        metrics_all[ds] = {}
-        for bias in bias_list :
-            metrics_all[ds][bias] = {}
-            for preproc in preproc_list :
-                path = retrieval_path+ds+'_'+bias+'_'+preproc+"_RFAware_metricsForPlot.pkl"
-                with open(path,"rb") as file:
-                    metrics = pickle.load(file)
-                    metrics_all[ds][bias][preproc] = metrics
-            path = retrieval_path+ds+'_'+bias+"__RFBlinded_metricsForPlot.pkl"
-            with open(path,"rb") as file:
-                metrics = pickle.load(file)
-                metrics_all[ds][bias]['FTU'] = metrics
-
-    #metrics_all[bias_type][preproc][metric]['mean']
-    for ds in dataset_list :
-        for metric in metric_list :
-            fig, ax = plt.subplots() # (figsize=(length, heigth)) #Scale size of image
-            ax.hlines(0,0,1,colors='black')
-
-            if plot_style is None :
-                for metric in metrics_keys :
-                    #if metric != "DP_ratio":
-                    plt.plot(all_bias,metrics_all[metric],label = str(metric),linestyle="--",marker="o")
-                    plt.style.use('tableau-colorblind10')
-            elif  plot_style == 'SIMPLE_PLOT' or plot_style == 'FILLED_STDEV' :
-                #Mean values
-                ax.plot(all_bias,metrics_all[ds]['label'][''][metric]['mean'], label = 'label bias', linestyle="--",marker="o", color="#595959")#Dark gray
-                ax.plot(all_bias,metrics_all[ds]['label']['reweighting'][metric]['mean'], label = 'label+reweighing', linestyle="--",marker="X", color="#006BA4")#Cerulean/Blue
-                ax.plot(all_bias,metrics_all[ds]['label']['massaging'][metric]['mean'], label = 'label+massaging', linestyle="--",marker="P", color="#A2C8EC")#Seil/Light blue
-                ax.plot(all_bias,metrics_all[ds]['label']['FTU'][metric]['mean'], label = 'label+FTU', linestyle="--",marker="D", color="#A2C8EC")#Seil/Light blue
-                ax.plot(all_bias,metrics_all[ds]['selectDoubleProp'][''][metric]['mean'], label = 'selection bias', linestyle="--",marker="s", color="#ABABAB")#Cerulean/Blue
-                ax.plot(all_bias,metrics_all[ds]['selectDoubleProp']['reweighting'][metric]['mean'], label = 'select+reweighing', linestyle="--",marker="^", color="#C85200")#Tenne/Dark orange
-                ax.plot(all_bias,metrics_all[ds]['selectDoubleProp']['massaging'][metric]['mean'], label = 'select+massaging', linestyle="--",marker="v", color="#FF800E")#Pumpkin/Bright orange
-                ax.plot(all_bias,metrics_all[ds]['selectDoubleProp']['FTU'][metric]['mean'], label = 'select+FTU', linestyle="--",marker=">", color="#FF800E")#Pumpkin/Bright orange
-                
-                if plot_style == 'FILLED_STDEV':
-                #Shade for std values
-                    ax.fill_between(all_bias,metrics_all[ds]['label'][''][metric]['mean'] - metrics_all[ds]['label'][''][metric]['stdev'], metrics_all[ds]['label'][''][metric]['mean'] + metrics_all[ds]['label'][''][metric]['stdev'], edgecolor = None, facecolor='#006BA4', alpha=0.4)
-                    ax.fill_between(all_bias,metrics_all[ds]['label']['reweighting'][metric]['mean'] - metrics_all[ds]['label']['reweighting'][metric]['stdev'], metrics_all[ds]['label']['reweighting'][metric]['mean'] + metrics_all[ds]['label']['reweighting'][metric]['stdev'], edgecolor = None, facecolor='#595959', alpha=0.4)
-                    ax.fill_between(all_bias,metrics_all[ds]['label']['massaging'][metric]['mean'] - metrics_all[ds]['label']['massaging'][metric]['stdev'], metrics_all[ds]['label']['massaging'][metric]['mean'] + metrics_all[ds]['label']['massaging'][metric]['stdev'], edgecolor = None, facecolor='#ABABAB', alpha=0.4)
-                    ax.fill_between(all_bias,metrics_all[ds]['selectDoubleProp'][''][metric]['mean'] - metrics_all[ds]['selectDoubleProp'][''][metric]['stdev'], metrics_all[ds]['selectDoubleProp'][''][metric]['mean'] + metrics_all[ds]['selectDoubleProp'][''][metric]['stdev'], edgecolor = None, facecolor='#ABABAB', alpha=0.4)
-                    ax.fill_between(all_bias,metrics_all[ds]['selectDoubleProp']['reweighting'][metric]['mean'] - metrics_all[ds]['selectDoubleProp']['reweighting'][metric]['stdev'], metrics_all[ds]['selectDoubleProp']['reweighting'][metric]['mean'] + metrics_all[ds]['selectDoubleProp']['reweighting'][metric]['stdev'], edgecolor = None, facecolor='#C85200', alpha=0.4)
-                    ax.fill_between(all_bias,metrics_all[ds]['selectDoubleProp']['massaging'][metric]['mean'] - metrics_all[ds]['selectDoubleProp']['massaging'][metric]['stdev'], metrics_all[ds]['selectDoubleProp']['massaging'][metric]['mean'] + metrics_all[ds]['selectDoubleProp']['massaging'][metric]['stdev'], edgecolor = None, facecolor='#FF800E', alpha=0.4)
-                    
-            ax.tick_params(labelsize = 'large',which='major')
-            if ylim is not None:
-                ax.set_ylim(ylim)
-            if xlim is not None :
-                ax.set_xlim(xlim)
-            #minor_ticks = np.arange(-1,1,0.05)
-            #ax.set_yticks(minor_ticks) #, minor=True)
-            #ax.set_xlabel(r'$\tau$', size=14)
-            
-            #ax.grid(which='both',linestyle='-',linewidth=0.5,color='lightgray')
-            ax.grid(visible=True)
-            ax.grid(which='minor',linestyle=':',linewidth=0.5,color='lightgray')
-            ax.minorticks_on()
-
-            #ax.legend(loc='best')
-            ax.legend(prop={'size':10}, loc='lower left') #,  bbox_to_anchor=(1, 0.87))
-            if title == '':
-                plt.title(metric+" values wrt train set bias level :\n ("+ds+", unbiased test set)" , fontsize=14)
-            else :
-                plt.title(title, fontsize=14)
-
-            if path_start is not None :
-                    plt.savefig(path_start+ds+"_"+metric+".pdf", format="pdf", bbox_inches="tight") # dpi=1000) #dpi changes image quality
-            if(display) :
-                plt.show()
-            plt.close()
-
 
 def plot_bargraph(retrieval_path:str, dataset_list=['student','OULADstem', 'OULADsocial'], metric_list=['acc','StatParity','EqqOddsDiff','GenEntropyIndex'], bias_list=['label','selectDoubleProp'],preproc_list=['', 'reweighting','massaging'],ylim:list[float]=None, xlim:list[float]=None, all_bias:list[float]=[0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9], plot_style: str = 'SIMPLE_PLOT', title: str = '', path_start:str = None, display=False) :
     """
@@ -438,12 +358,8 @@ def plot_bargraph(retrieval_path:str, dataset_list=['student','OULADstem', 'OULA
             fig, ax = plt.subplots() # (figsize=(length, heigth)) #Scale size of image
             ax.hlines(y=0,xmin=-0.05,xmax=1,colors='black')
 
-            #HERE
             bar_width = 0.01
-            # Positions des barres
-            #indices = np.arange(len(all_bias))
             indices = np.array(all_bias)
-            #indices = np.arange(0, 1.0, 0.1)
 
             if plot_style is None :
                 for metric in metrics_keys :
@@ -451,12 +367,6 @@ def plot_bargraph(retrieval_path:str, dataset_list=['student','OULADstem', 'OULA
                     plt.plot(all_bias,metrics_all[metric],label = str(metric),linestyle="--",marker="o")
                     plt.style.use('tableau-colorblind10')
             elif  plot_style == 'SIMPLE_PLOT' or plot_style == 'FILLED_STDEV' :
-                #Mean values
-                #ax.plot(indices,metrics_all[ds]['label'][''][metric]['mean'], label = 'label bias', linestyle="--",marker="o", color="#595959")#Dark gray
-                #ax.bar(indices - 1.5*bar_width,metrics_all[ds][bias][''][metric]['mean'], label = 'label bias', width=bar_width,color="#595959")#Dark gray
-                #ax.bar(indices - 0.5*bar_width,metrics_all[ds][bias]['reweighting'][metric]['mean'], label = 'label+reweighing', width=bar_width, color="#006BA4")#Cerulean/Blue
-                #ax.bar(indices + 0.5*bar_width,metrics_all[ds][bias]['massaging'][metric]['mean'], label = 'label+massaging', width=bar_width, color="#FF800E")#Pumpkin/Bright orange
-                #ax.bar(indices + 1.5*bar_width,metrics_all[ds][bias]['FTU'][metric]['mean'], label = 'label+FTU', width=bar_width, color="#A2C8EC")#Seil/Light blue
                 ax.bar(indices - 3.6*bar_width,metrics_all[ds]['label'][''][metric]['mean'], label = 'label bias', width=bar_width,color="#595959")#Dark gray
                 ax.bar(indices - 2.6*bar_width,metrics_all[ds]['label']['reweighting'][metric]['mean'], label = 'label+reweighing', width=bar_width, color="#006BA4")#Cerulean/Blue
                 ax.bar(indices - 1.6*bar_width,metrics_all[ds]['label']['massaging'][metric]['mean'], label = 'label+massaging', width=bar_width, color="#5F9ED1")#Picton blue
@@ -466,16 +376,7 @@ def plot_bargraph(retrieval_path:str, dataset_list=['student','OULADstem', 'OULA
                 ax.bar(indices + 1.6*bar_width,metrics_all[ds]['selectDoubleProp']['reweighting'][metric]['mean'], label = 'select+reweighing', width=bar_width, color="#C85200")#Tenne/Dark orange
                 ax.bar(indices + 2.6*bar_width,metrics_all[ds]['selectDoubleProp']['massaging'][metric]['mean'], label = 'select+massaging', width=bar_width, color="#FF800E")#Pumpkin/Bright orange
                 ax.bar(indices + 3.6*bar_width,metrics_all[ds]['selectDoubleProp']['FTU'][metric]['mean'], label = 'select+FTU', width=bar_width, color="#FFBC79")#Mac and cheese orange
-                """
-                if plot_style == 'FILLED_STDEV':
-                #Shade for std values
-                    ax.fill_between(all_bias,metrics_all[ds]['label'][''][metric]['mean'] - metrics_all[ds]['label'][''][metric]['stdev'], metrics_all[ds]['label'][''][metric]['mean'] + metrics_all[ds]['label'][''][metric]['stdev'], edgecolor = None, facecolor='#006BA4', alpha=0.4)
-                    ax.fill_between(all_bias,metrics_all[ds]['label']['reweighting'][metric]['mean'] - metrics_all[ds]['label']['reweighting'][metric]['stdev'], metrics_all[ds]['label']['reweighting'][metric]['mean'] + metrics_all[ds]['label']['reweighting'][metric]['stdev'], edgecolor = None, facecolor='#595959', alpha=0.4)
-                    ax.fill_between(all_bias,metrics_all[ds]['label']['massaging'][metric]['mean'] - metrics_all[ds]['label']['massaging'][metric]['stdev'], metrics_all[ds]['label']['massaging'][metric]['mean'] + metrics_all[ds]['label']['massaging'][metric]['stdev'], edgecolor = None, facecolor='#ABABAB', alpha=0.4)
-                    ax.fill_between(all_bias,metrics_all[ds]['selectDoubleProp'][''][metric]['mean'] - metrics_all[ds]['selectDoubleProp'][''][metric]['stdev'], metrics_all[ds]['selectDoubleProp'][''][metric]['mean'] + metrics_all[ds]['selectDoubleProp'][''][metric]['stdev'], edgecolor = None, facecolor='#ABABAB', alpha=0.4)
-                    ax.fill_between(all_bias,metrics_all[ds]['selectDoubleProp']['reweighting'][metric]['mean'] - metrics_all[ds]['selectDoubleProp']['reweighting'][metric]['stdev'], metrics_all[ds]['selectDoubleProp']['reweighting'][metric]['mean'] + metrics_all[ds]['selectDoubleProp']['reweighting'][metric]['stdev'], edgecolor = None, facecolor='#C85200', alpha=0.4)
-                    ax.fill_between(all_bias,metrics_all[ds]['selectDoubleProp']['massaging'][metric]['mean'] - metrics_all[ds]['selectDoubleProp']['massaging'][metric]['stdev'], metrics_all[ds]['selectDoubleProp']['massaging'][metric]['mean'] + metrics_all[ds]['selectDoubleProp']['massaging'][metric]['stdev'], edgecolor = None, facecolor='#FF800E', alpha=0.4)
-                """
+            
             ax.tick_params(labelsize = 'large',which='major')
             if ylim is not None:
                 ax.set_ylim(ylim)
@@ -483,7 +384,6 @@ def plot_bargraph(retrieval_path:str, dataset_list=['student','OULADstem', 'OULA
                 if metric == 'acc':
                     ax.set_ylim([0.4,1])
             ax.set_xlim([-0.05,0.95])
-            #ax.set_xlabel("Bias intensity ("+r'$\beta_m$'+" for label, "+r"$p_u"+" for selection)", size=14)
             ax.set_xlabel('Bias intensity ($\\beta_m$ for label, $p_u$ for selection)', size=14)
             if ds == 'student':
                 if metric == 'acc':
@@ -498,13 +398,6 @@ def plot_bargraph(retrieval_path:str, dataset_list=['student','OULADstem', 'OULA
                     y_label = metric
                 ax.set_ylabel(y_label, size = 22)
 
-            #minor_ticks = np.arange(-1,1,0.05)
-            #ax.set_yticks(minor_ticks) #, minor=True)
-            #ax.set_xticks(all_bias)  # Set x-ticks to all_bias values
-            #ax.set_xticklabels(['0','0.2','0.4','0.6','0.8'])
-            
-            #ax.grid(which='both',linestyle='-',linewidth=0.5,color='lightgray')
-            #ax.grid(visible=True)
             ax.grid(which='minor',linestyle=':',linewidth=0.5,color='lightgray')
             ax.minorticks_on()
             
@@ -514,8 +407,8 @@ def plot_bargraph(retrieval_path:str, dataset_list=['student','OULADstem', 'OULA
                 ax.legend(loc='lower left')
             else :
                 ax.legend(loc='best')
-
             #ax.legend(prop={'size':10}, loc='lower left') #,  bbox_to_anchor=(1, 0.87))
+
             if title is None:
                 plt.title(metric+" values wrt train set bias level :\n ("+ds+", unbiased test set)" , fontsize=14)
             elif title != '' :

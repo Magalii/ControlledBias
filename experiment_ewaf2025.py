@@ -2,9 +2,6 @@ from pandas import DataFrame
 import pickle
 import time
 from datetime import timedelta
-import sys 
-sys.path.append('Code/')
-sys.path.append('Code/parent_aif360')
 
 from ControlledBias.dataset.studentMale_dataset import StudentMaleDataset
 from ControlledBias.dataset.oulad_dataset import OULADDataset
@@ -14,21 +11,25 @@ from ControlledBias import model_training as mt
 from ControlledBias import analyzing as a
 from ControlledBias import fairness_intervention as fair
 
+#Add path to the directory in which you placed the 'ControlledBias' folder.
+import sys 
+sys.path.append('Code/')
+#sys.path.append('Code/parent_aif360')
+
 start = time.perf_counter()
 stop = start
-bias_levels = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9] #, 1]
 k = -1 #negative value will create error instead of silent mistake
-path_start = "Code/ControlledBias/data/"
-blind = False
+path_start = "ControlledBias/data/" #Location of saved (intermediate) results TODO was Code/ControlledBias/data/
 
-datasets = ['student']#,'OULADstem', 'OULADsocial']  #, 'student' OULAD
-biases = ['label'] #['selectDoubleProp','label', 'labelDouble', 'selectDouble','selectLow'] #['label','selectDouble','selectLow'] #,'selectDouble','selectLow' label
-preproc_methods = ['massaging', 'reweighting'] #, 'reweighting', 'LFR','massaging'] #
-#ftu corresponds to no preproc + blind model
-classifiers = ['tree','RF','neural'] #,'tree','neural']
-blind_model = [True,False]
+#You can change here the datasets, biases, preprocessing methods and bias intensity to be used in experiment
+datasets = ['student','OULADstem', 'OULADsocial']
+biases = ['label','selectDoubleProp'] #Other possible options (not used in EWAF2025 publication) are 'labelDouble' and 'selectLow'
+preproc_methods = ['', 'massaging', 'reweighting'] #Fairness through Unawareness corresponds to no preproc + blind_model = True
+classifiers = ['RF'] #RF was used for the results in EWAF2025 publication, other options are 'tree' and 'neural'
+blind_model = [True,False] #True to exclude sensitive attribute from features used in training, False to include it
+bias_levels = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
 
-save = True
+save = True #Whether results, included intermediate ones, will be saved. Necassary to obtain plots
 display_plot = False
 
 
@@ -60,7 +61,6 @@ def run_expe(datasets,biases,preproc_methods,classifiers,blind_model,path_start)
                 with open(path_start+ds+"_dataset",'wb') as file:
                     pickle.dump(dataset_orig,file)
 
-        #computed = False 
         for bias in biases :
             if save : path = path_start+ds+'_'+bias
             if computed :
@@ -80,11 +80,9 @@ def run_expe(datasets,biases,preproc_methods,classifiers,blind_model,path_start)
                     nk_folds_dict, n_folds_lists = mt.common_splits(nbias_data_dict,k,path)
                     del n_folds_lists
                     print("Label bias introduced")
-                elif bias == 'selectDouble' or bias == 'selectLow' or bias == 'selectDoubleProp' :
+                elif bias == 'selectLow' or bias == 'selectDoubleProp' :
                     if bias == 'selectDoubleProp' :
                         removal_distr = 'double_disc'
-                    elif bias == 'selectDouble' :
-                        removal_distr = 'double_radnom_disc'
                     elif bias == 'selectLow' :
                         removal_distr = 'lower_weight'
                     nbias_data_dict = db.undersampling_nbias(dataset_orig, bias_levels, removal_distr, path)
@@ -92,7 +90,7 @@ def run_expe(datasets,biases,preproc_methods,classifiers,blind_model,path_start)
                     nk_folds_dict = mt.random_splits(nbias_data_dict,k,path)
                     print("Selection bias introduced")
                 else :
-                    print("WARNING Not a valid bias type for making folds")
+                    print("WARNING Not a valid bias type")
                 del nbias_data_dict
             #create train and test sets for each fold and bias, nk_train_splits[bias][fold]: {'train': train set, 'test': test set}
             nk_train_splits = mt.nk_merge_train(nk_folds_dict)
@@ -147,19 +145,6 @@ def run_expe(datasets,biases,preproc_methods,classifiers,blind_model,path_start)
                             n_pred_bias = mt.prediction_nbias(nk_models, nk_folds_dict, blinding=blind, biased_test=True, path_start=path_biased)
                         #Manage memory
                         del nk_models, n_pred_bias, n_pred
-                        #Create plots
-                        """
-                        all_metrics = a.get_all_metrics(nk_folds_dict, n_pred, path_start=path)
-                        if save : path_biased = path+'_Biased'
-                        all_metrics_biasedTest = a.get_all_metrics(nk_folds_dict, n_pred_bias, biased_test=True, path_start=path)
-
-                        metrics_for_plot, all_bias = a.metrics_for_plot(all_metrics,path_start=path)
-                        if save : path_biased = path+'_Biased'
-                        metricsBiased_for_plot, all_bias = a.metrics_for_plot(all_metrics_biasedTest,path_start=path_biased)
-
-                        a.plot_by_bias(metrics_for_plot, all_bias, plot_style='FILLED_STDEV',title='Metric values wrt train set bias level\n ('+bias+' bias, '+preproc+', '+model+visibility+', unbiased test set)', path_start='Code/ControlledBias/plots/'+ds+'_'+bias+'_'+preproc+'_'+model+'_byBias_unbiasedTest', display=display_plot)
-                        a.plot_by_bias(metricsBiased_for_plot, all_bias, plot_style='FILLED_STDEV', title='Metric values wrt train set bias level\n ('+bias+' bias, '+preproc+', '+model+visibility+', biased test set)',path_start='Code/ControlledBias/plots/'+ds+'_'+bias+'_'+preproc+'_'+model+'_byBias_BiasedTest', display=display_plot)
-                        """
                         end = time.perf_counter()
                         print("Experiment completed for "+str(ds)+' '+str(bias)+' '+str(preproc)+' '+str(model)+' in hh:mm:ss',timedelta(seconds=end-stop))
                 #Manage memory
@@ -170,7 +155,14 @@ def run_expe(datasets,biases,preproc_methods,classifiers,blind_model,path_start)
     print("Total experiment time : hh:mm:ss",timedelta(seconds=end-start))
 
 
-#run_expe(datasets,biases,preproc_methods,classifiers,blind_model,path_start=path_start)
-a.compute_all(datasets,biases,preproc_methods,classifiers,blind_model,path_start=path_start)
-print("Start producing plots")
-a.plot_all(datasets,biases,preproc_methods,classifiers,blind_model,bias_levels,path_start=path_start)
+run_expe(datasets,biases,preproc_methods,classifiers,blind_model,path_start=path_start)
+# Compute metrics for all model produced (Uses a lot of RAM, if it exceeds you memory, running the script for one preprocessing method at a time should help)
+for ds in datasets :
+    a.compute_all([ds],biases,preproc_methods,classifiers,blind_model,path_start=path_start)
+# Produce the same bar graph is in EWAF2025 publication
+metrics_list = ['acc','StatParity','EqqOddsDiff','GenEntropyIndex']
+results_path = path_start+"Results/"
+plot_path = "ControlledBias/plotsEWAF/"
+a.plot_bargraph(retrieval_path=results_path, dataset_list=datasets, path_start=plot_path)
+#To plot extra graphs not included in the EWAF2025 publication, uncomment the following line :
+#a.plot_all(datasets,biases,preproc_methods,classifiers,blind_model,bias_levels,path_start=path_start)
