@@ -6,7 +6,6 @@ import math
 from sklearn.naive_bayes import CategoricalNB
 
 from aif360.datasets import StandardDataset
-from aif360.datasets import BinaryLabelDataset
 from aif360.algorithms.preprocessing import Reweighing
 from aif360.algorithms.preprocessing import LFR
 from aif360.metrics import BinaryLabelDatasetMetric
@@ -135,11 +134,6 @@ def massage(data_orig: StandardDataset, fav_one=True) :
 
     return massaged_dataset
     
-
-
-    
-
-
 
 def n_proc(data_dict,proc) :
     """ Apply procedure 'proc' on dictionary such that keys in data_dict are bias levels

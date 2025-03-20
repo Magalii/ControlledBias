@@ -3,18 +3,14 @@ import numpy as np
 import scipy.stats as st
 import pickle
 
-import sys 
-sys.path.append('..')
-sys.path.append('../parent_aif360')
-
-from parent_aif360.aif360.datasets import StandardDataset
+from aif360.datasets import StandardDataset
 
 ###############################
 # Measurement related biasing #
 ###############################
 
 def measurement_biasing(df: pd.DataFrame, attr: str, sens_attr: str, b_m: float, orig_values: pd.Series=None, noise=0.1, double_disc=False, fav_one=True, inplace=True) :
-    """ Introduce measurement bias to chosen attribute by adding penalty to unprivileged group
+    """ Introduce measurement bias to chosen attribute by adding penalty to unprivileged group (or both unprivileged and favored groups if double_disc = True)
 
     Parameters
     ----------
@@ -75,7 +71,7 @@ def measurement_biasing(df: pd.DataFrame, attr: str, sens_attr: str, b_m: float,
 def flip_label_bias(df: pd.DataFrame, attr: str, sens_attr: str, b_m: float, double_disc : True, fav_one=True, inplace=True) :
     """ WARNING This function has not been tested !!
 
-    Add measurement bias to chosen binary attribute by flipping the value
+    Add measurement bias to chosen binary attribute by flipping the label
 
     Parameters
     ----------
@@ -87,6 +83,8 @@ def flip_label_bias(df: pd.DataFrame, attr: str, sens_attr: str, b_m: float, dou
         Name of the sensitive attribute
     b_m : float
         Coefficient of the measurement bias added, 0 means no bias, 1 means 50% of dataset is affected by the bias
+    double_disc : Boolean, optional
+        Whether the label bias is applied only on unprivileged group (False) or on both unprivileged as a penalty and privileged group as a bonus (True)
     fav_one : Boolean, optional
         Wether the favorable value for the sensitive attribute is 1 (True) or 0 (False)
     inplace : Boolean, optional
@@ -123,8 +121,6 @@ def flip_label_bias(df: pd.DataFrame, attr: str, sens_attr: str, b_m: float, dou
     df_biased.loc[flip_unpriv_id,attr_biased] = neg_val
         
     return df_biased
-
-
 
 def mislabeling_nbias(dataset_orig: StandardDataset, b_m: list, noise:float = 0.1, double_disc=False, path_start: str = None) :
     """
@@ -164,7 +160,7 @@ def mislabeling_nbias(dataset_orig: StandardDataset, b_m: list, noise:float = 0.
 #################################
 
 def undersampling_biasing(df: pd.DataFrame, sens_attr: str, p_u: float, removal_distr = 'normal', cond_attr:str=None, label: str=None, fav_one=True) :
-    """ Add undersampling/selection bias to the given dataset by removing a proportion p_u of unprivileged individuals
+    """ Add undersampling/selection bias to the given dataset by removing a proportion p_u of a chosen group, usually the unprivileged one (see 'removal_distr' argument)
 
     Parameters
     ----------
@@ -177,10 +173,11 @@ def undersampling_biasing(df: pd.DataFrame, sens_attr: str, p_u: float, removal_
     cond_attr : string, optional
         attribute on which the undersampling is conditioned, if None the unpriviledged instances are removed randomly
     removal_distr : string, optional
-        distribution characterizing the probability for an instance to be removed, requires cond_attr != None
+        distribution characterizing the probability for an instance to be removed, in same case it requires cond_attr != None
         if 'random' the unpriviledged instances are removed randomly
-        if 'random_pos' unpriviledged instances are randomly removed amongst those with positive label
         if 'normal' the removal probabilities follow the pdf of a normal distribution on unpriviledged instances sorted by  the index sorted by 'cond_attr' values,
+        if 'random_pos' unpriviledged instances are randomly removed amongst those with positive label
+        if 'double_disc' random removal of instances amongst unpriviledged instances with positive label and privileged instances with negative label (a proportion p_u of element is removed for each of those two groups)
         if 'lower_weight' the removal probabilities are weighted according to cond_attr values, lower values more likely to be removed. weight_i = (val_max-val_i)²/SumOfAll((val_max-val)²)
         if 'higher_weight' the removal probabilities are weighted according to cond_attr values, higher values more likely to be removed. weight_i = val_i²/SumOfAll(val²)
         else the unpriviledged individuals with lowest values are removed
@@ -222,7 +219,7 @@ def undersampling_biasing(df: pd.DataFrame, sens_attr: str, p_u: float, removal_
                     id_unpriv_neg = df_unpriv_neg.index.to_list()
                     drop_id_neg = my_random_choice(id_unpriv_neg,int_p_u-num_pos)
                     drop_id = [*id_unpriv_pos, *drop_id_neg]
-            elif removal_distr == 'double_random_disc_flawed' : # Original double selection bias, but doesn't work well for OULADstem
+            elif removal_distr == 'double_random_disc_flawed' : # Legacy double selection bias, but doesn't work well for OULADstem
                 print("undersampling : double_random_disc")
                 df_unpriv_pos = df_unpriv.loc[df[label] == 1,:]
                 id_unpriv_pos = df_unpriv_pos.index.to_list()
@@ -243,7 +240,7 @@ def undersampling_biasing(df: pd.DataFrame, sens_attr: str, p_u: float, removal_
                 else : #drop all unpriv_pos
                     drop_priv = id_priv_neg
                 drop_id = [*drop_unpriv, *drop_priv]
-            elif removal_distr == 'double_disc' : # Drop p_u*nbr_unpriv_pos and p_u*nbr_priv_neg) elements, with the undersampling proportional to the size of each of those two groups
+            elif removal_distr == 'double_disc' : # Drop p_u*nbr_unpriv_pos + p_u*nbr_priv_neg elements
                 print("undersampling : double_disc")
                 df_unpriv_pos = df_unpriv.loc[df[label] == 1,:]
                 id_unpriv_pos = df_unpriv_pos.index.to_list()

@@ -1,17 +1,15 @@
 import numpy as np
 import pandas as pd
 import pickle
-import time
-import sys 
-sys.path.append('..')
-sys.path.append('../parent_aif360')
 
 from aif360.datasets import StandardDataset
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.neural_network import MLPClassifier
 
-from ControlledBias import dataset_creation as dc
+import sys 
+sys.path.append('..')
+
 from ControlledBias import fairness_intervention as fair
 
 
@@ -121,6 +119,8 @@ def get_subset(dataset_orig: StandardDataset, dataset_smaller: StandardDataset) 
     
 def merge_train(split_list: list[StandardDataset], fold:int, path: str = None) :
     """ Create a train and test split where split_list[fold] is test set and train set is all other splits merged
+    path: String
+        if not None, save dataset dict on disk at address 'path' + function postfix
     """
     k = len(split_list)
     df_list = [None] * k
@@ -196,6 +196,8 @@ def single_classifier(algo: str, dataset_train: StandardDataset, blinding: bool,
     blinding : Boolean
         Wether the sensitive attribute is used in training (False) or not (True)
         blinding = True is equivalent to applying Fairness Through Unawareness
+    path_start: String
+        if not None, save dataset dict on disk at address 'path_start' + function postfix
     Returns
     -------
     Classifier
@@ -236,6 +238,8 @@ def classifier_kfold(classifier: str, fold_dict, blinding: bool, path_start: str
         Type of classifier that will be trained with each fold in split_list
     fold_dict : Dictionary {int: {'train': StandardDataset, 'test: StandardDataset}}
         Dictionary of the train and test sets for each fold (only train is used)
+    path_start: String
+        if not None, save dataset dict on disk at address 'path_start' + function postfix
     Returns
     -------
     Dictionary
@@ -259,7 +263,8 @@ def classifier_kfold(classifier: str, fold_dict, blinding: bool, path_start: str
     return k_models
     
 def classifier_nbias(classifier: str, nk_dataset_dict, blinding: bool, path_start: str = None) :
-    """ 
+    """ Create a classifier for each bias and each fold in fold accounted for in nk_dataset_dict
+    
     Parameters
     ----------
     algo : String ('RF'|'tree'|'neural')
@@ -267,6 +272,8 @@ def classifier_nbias(classifier: str, nk_dataset_dict, blinding: bool, path_star
     dataset_dict : Dictionary {float : {int : {'train' : StandardDataset, 'test': StandardDataset}}}
         Nested dictionaries holding train and test sets for each bias and each fold (Only train set is used)
         nk_dataset_dict[bias][fold]: {'train': train set, 'test': test set}
+    path_start: String
+        if not None, save dataset dict on disk at address 'path_start' + function postfix
     Returns
     -------
     Dictionary of dictionary
@@ -292,7 +299,7 @@ def classifier_nbias(classifier: str, nk_dataset_dict, blinding: bool, path_star
 ###################
 
 def single_prediction(classifier, test_dataset: StandardDataset, blinding: bool):
-    """
+    """ Compute the prediction of 'classifier' for the given 'test_dataset
     blinding : Boolean
         Wether the sensitive attribute has been used to train 'classifier' (True) or not (False)
     Returns
@@ -309,7 +316,7 @@ def single_prediction(classifier, test_dataset: StandardDataset, blinding: bool)
     return pred_dataset
 
 def prediction_kfold(classifier_dict, split_list: list[StandardDataset], blinding: bool, path_start: str = None):
-    """
+    """ Compute the predictions for all k folds given in split_list
     classifier_dict : Dictionary with fold number as keys and corresponding classifier as object
         Dict. of classifiers trained on different folds of the same dataset
     split_list :
@@ -330,7 +337,7 @@ def prediction_kfold(classifier_dict, split_list: list[StandardDataset], blindin
     return k_pred
 
 def prediction_nbias(classifier_dict, label_split_dict, blinding: bool, path_start: str = None, biased_test = False) :
-    """ 
+    """ Compute the prediction for classifiers with different bias levels and fold found in classifier_dict and given the corresponding test set
     classifier_dict : Dictionary
         Nested dictionaries holding classifiers, where classifier_dict[b][f] holds the model trained on fold nbr 'f' of dataset with bias level 'b'
     label_split_dict : Dictionary

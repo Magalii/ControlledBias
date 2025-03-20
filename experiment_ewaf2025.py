@@ -3,23 +3,25 @@ import pickle
 import time
 from datetime import timedelta
 
+
+import sys 
+sys.path.append('..')
+
 from ControlledBias.dataset.studentMale_dataset import StudentMaleDataset
 from ControlledBias.dataset.oulad_dataset import OULADDataset
 from ControlledBias import dataset_biasing as db
-from ControlledBias import dataset_creation as dc
 from ControlledBias import model_training as mt
 from ControlledBias import analyzing as a
 from ControlledBias import fairness_intervention as fair
 
 #Add path to the directory in which you placed the 'ControlledBias' folder.
 import sys 
-sys.path.append('Code/')
-#sys.path.append('Code/parent_aif360')
+sys.path.append('..')
 
 start = time.perf_counter()
 stop = start
 k = -1 #negative value will create error instead of silent mistake
-path_start = "ControlledBias/data/" #Location of saved (intermediate) results TODO was Code/ControlledBias/data/
+path_start = "data/" #Location of saved (intermediate) results TODO was Code/ControlledBias/data/
 
 #You can change here the datasets, biases, preprocessing methods and bias intensity to be used in experiment
 datasets = ['student','OULADstem', 'OULADsocial']
@@ -131,7 +133,8 @@ def run_expe(datasets,biases,preproc_methods,classifiers,blind_model,path_start)
                         if not computed :
                             nk_models = mt.classifier_nbias(model, preproc_dict, blinding=blind, path_start=path)
                         #Create predictions from data with no preprocessing (both original and biased test set)
-                        if save : path_biased = path +"_biasedTest"
+                        if save :
+                            path_biased = path +"_biasedTest"
                         if computed :
                             try :
                                 with open(path+"_pred_all.pkl","rb") as file:
@@ -161,8 +164,8 @@ for ds in datasets :
     a.compute_all([ds],biases,preproc_methods,classifiers,blind_model,path_start=path_start)
 # Produce the same bar graph is in EWAF2025 publication
 metrics_list = ['acc','StatParity','EqqOddsDiff','GenEntropyIndex']
-results_path = path_start+"Results/"
-plot_path = "ControlledBias/plotsEWAF/"
+results_path = path_start
+plot_path = "plotsEWAF/"
 a.plot_bargraph(retrieval_path=results_path, dataset_list=datasets, path_start=plot_path)
 #To plot extra graphs not included in the EWAF2025 publication, uncomment the following line :
-#a.plot_all(datasets,biases,preproc_methods,classifiers,blind_model,bias_levels,path_start=path_start)
+a.plot_all(datasets,biases,preproc_methods,classifiers,blind_model,bias_levels,path_start=path_start)

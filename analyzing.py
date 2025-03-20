@@ -2,9 +2,6 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 import pickle
-import sys 
-sys.path.append('Code/')
-sys.path.append('Code/parent_aif360')
 
 from aif360.datasets import BinaryLabelDataset
 from aif360.datasets import StandardDataset
@@ -12,10 +9,13 @@ from aif360.metrics import BinaryLabelDatasetMetric #Metrics about 1 dataset
 from aif360.metrics.classification_metric import ClassificationMetric #Metrics about 2 datasets
 from sklearn.metrics import f1_score
 
-#from ControlledBias import dataset_creation as dc
+import sys 
+sys.path.append('..')
+
 from ControlledBias import model_training as mt
 
 def dataset_info(BLDataset: BinaryLabelDataset, fav_one=True) :
+    # Returns a dictionary containing various metrics about a 'BLDataset'
     sens_attr = BLDataset.protected_attribute_names[0]
     priv = [{sens_attr : int(fav_one)}]
     unpriv = [{sens_attr : 1-int(fav_one)}]
@@ -35,6 +35,7 @@ def dataset_info(BLDataset: BinaryLabelDataset, fav_one=True) :
     return metrics
 
 def dataset_info_comparison(ds1: BinaryLabelDataset, ds2: BinaryLabelDataset) :
+    # Returns a Dataframe containing various metrics about ds1 and ds2 and the difference in value between the two datasets for each metrics
     info_ds1 = dataset_info(ds1)
     info_ds2 = dataset_info(ds2)
     res = {}
@@ -49,10 +50,11 @@ def nbr_id_affected(df1: pd.DataFrame, df2: pd.DataFrame) :
         df1 : Original dataset
         df2 : Biased dataset
     """
-    res = df1.compare(df2) #.convert_to_dataframe()[0]
+    res = df1.compare(df2)
     return len(res.index)
 
 def pred_info(test_dataset: StandardDataset, pred_dataset: StandardDataset, fav_one=True) :
+    # Returns a dictionary containing various performances and fairness metrics computed on model prediction (pred_dataset) and considering 'test_dataset' as test set
     sens_attr = test_dataset.protected_attribute_names[0]
     priv = [{sens_attr : int(fav_one)}]
     unpriv = [{sens_attr : 1-int(fav_one)}]
@@ -104,13 +106,11 @@ def get_all_metrics(test_nk_dict, nk_pred, path_start: str = None, biased_test =
     all_info = {}
     for b in nk_pred.keys() :
         all_info[b] = {}
-        #for k in nk_pred[b].keys() :
         for k in range(len(nk_pred[b])) :
             if biased_test : #test set has the same level of bias as training set
                 test_fold = test_nk_dict[b][k]
             else : #test set is a subset of the original (considered unbiased) dataset
                 test_fold = test_nk_dict[0][k]
-            #print("bias : "+str(b) + " fold : "+str(k))
             all_info[b][k] = pred_info(test_fold, nk_pred[b][k])
 
     if path_start is not None :
@@ -119,10 +119,8 @@ def get_all_metrics(test_nk_dict, nk_pred, path_start: str = None, biased_test =
         else :
             biased = ''
         path = path_start+"_metrics"+biased+"_all.pkl"
-        #file = open(path,"wb")
         with open(path,"wb") as file:
             pickle.dump(all_info,file)
-        #file.close()
     
     del test_nk_dict, nk_pred
     if memory_save :
@@ -139,7 +137,7 @@ def compute_all(data_list, bias_list, preproc_list, model_list, blinding_list, p
     """
 
     #bias_levels = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]
-    #path_start = "Code/ControlledBias/data/"
+    #path_start = "data/"
     #datasets = ['OULAD', 'student']  #, 'student' OULAD
     #biases = ['label','selectDouble','selectLow'] #,'selectDouble','selectLow' label
     #preproc_methods = ['', 'reweighting', 'lfr','massaging']
@@ -168,7 +166,7 @@ def compute_all(data_list, bias_list, preproc_list, model_list, blinding_list, p
                         with open(path_biased+"_pred_all.pkl","rb") as file:
                             n_pred_bias = pickle.load(file)
                         
-                        path = path_start+"Results/"+ds+'_'+bias+'_'+preproc+'_'+model+visibility
+                        path = path_start+ds+'_'+bias+'_'+preproc+'_'+model+visibility
 
                         all_metrics = get_all_metrics(nk_folds_dict, n_pred, path_start=path)
                         path_biased = path+"_Biased"
@@ -197,19 +195,19 @@ def plot_all(data_list, bias_list, preproc_list, model_list, blinding_list, all_
                             visibility = "Blinded"
                         else :
                             visibility = "Aware"
-                        path = path_start+"Results/"+ds+'_'+bias+'_'+preproc+'_'+model+visibility
+                        path = path_start+ds+'_'+bias+'_'+preproc+'_'+model+visibility
                         with open(path+"_metricsForPlot.pkl","rb") as file:
                             metrics_for_plot = pickle.load(file)
                         with open(path+"_Biased"+"_metricsForPlot.pkl","rb") as file:
                             metricsBiased_for_plot = pickle.load(file)
-                        plot_by_bias(metrics_for_plot, all_bias, plot_style='FILLED_STDEV',title='Metric values wrt train set bias level\n ('+bias+' bias, '+preproc+', '+model+visibility+', unbiased test set)', path_start='Code/ControlledBias/plots/'+ds+'_'+bias+'_'+preproc+'_'+model+visibility+'_byBias_unbiasedTest', display=False)
-                        plot_by_bias(metricsBiased_for_plot, all_bias, plot_style='FILLED_STDEV', title='Metric values wrt train set bias level\n ('+bias+' bias, '+preproc+', '+model+visibility+', biased test set)',path_start='Code/ControlledBias/plots/'+ds+'_'+bias+'_'+preproc+'_'+model+visibility+'_byBias_BiasedTest', display=False)
+                        plot_by_bias(metrics_for_plot, all_bias, plot_style='FILLED_STDEV',title='Metric values wrt train set bias level\n ('+bias+' bias, '+preproc+', '+model+visibility+', unbiased test set)', path_start='plots/'+ds+'_'+bias+'_'+preproc+'_'+model+visibility+'_byBias_unbiasedTest', display=False)
+                        plot_by_bias(metricsBiased_for_plot, all_bias, plot_style='FILLED_STDEV', title='Metric values wrt train set bias level\n ('+bias+' bias, '+preproc+', '+model+visibility+', biased test set)',path_start='plots/'+ds+'_'+bias+'_'+preproc+'_'+model+visibility+'_byBias_BiasedTest', display=False)
                         #Manage memory
                         metrics_for_plot = None
                         metricsBiased_for_plot = None 
 
 def metrics_for_plot(nk_results_dict, path_start: str = None, memory_save = False, fold: int = None) :
-    """
+    """ Take a dictionary of metrics computed using get_all_metrics() and returns a dictionary of metrics that is more convenient for plotting results
     nk_results_dic : Dictionary {float: {int: {str: float}}}
         Nested dictionaries where nk_results_dic[b][f][metric_name] = Value of 'metric_name' obtained for fold nbr 'k' of model trained with bias level 'b'
     """
@@ -260,7 +258,8 @@ def metrics_for_plot(nk_results_dict, path_start: str = None, memory_save = Fals
     return metrics_by_bias, all_bias
 
 def plot_by_bias(metrics_by_bias, all_bias: list[float], plot_style: str = 'SIMPLE_PLOT', title: str = '', path_start:str = None, display=True) :
-    """
+    """ Plot results with each graph presenting several metrics for one specific combination of dataset, bias type, preprocessing metrics and blinding
+        The x axis shows the values for bias intensity
     nk_results_dic : Dictionary {float: {int: {str: float}}}
         Nested dictionaries where nk_results_dic[b][f][metric_name] = Value of 'metric_name' obtained for fold nbr 'k' of model trained with bias level 'b'
     plot_style : string, optional
@@ -327,10 +326,16 @@ def plot_by_bias(metrics_by_bias, all_bias: list[float], plot_style: str = 'SIMP
 
 
 def plot_bargraph(retrieval_path:str, dataset_list=['student','OULADstem', 'OULADsocial'], metric_list=['acc','StatParity','EqqOddsDiff','GenEntropyIndex'], bias_list=['label','selectDoubleProp'],preproc_list=['', 'reweighting','massaging'],ylim:list[float]=None, xlim:list[float]=None, all_bias:list[float]=[0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9], plot_style: str = 'SIMPLE_PLOT', title: str = '', path_start:str = None, display=False) :
-    """
+    """ Plot results as presented in EWAF2025 paper : each graph presenting the values of several models for one specific combination of metric and dataset 
+        The x axis shows the values for bias intensity
+    retrieval_path : path at which the different results for the model considered can be found
+    dataset_list : list of datasets for which a plot should be computed
+    metric_list : list of datasets for which a plot should be computed
+    bias_list : list of bias type(s) that should be displayed in the graphs
+    preproc_list : list of preprocessing function(s) that should be displayed in the graphs
     plot_style : string, optional
-        'SIMPLE_PLOT' for choice of metrics displaid without standard deviation
-        'FILLED_STDEV' for choice of metrics displaid with standard deviation as colored area arround the curve
+        'SIMPLE_PLOT' : gives bar graph with well presented results for bias_list=['label','selectDoubleProp'] and preproc_list=['', 'reweighting','massaging']
+        None : accept different values for bias_list and preproc_list, but display results as line graph with default formating
     title : string, optional
         None for automatic title
         '' (empty string) for no title
