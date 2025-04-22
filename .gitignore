@@ -1,6 +1,5 @@
 # My files
 data/*.pkl
-plots/*.pdf
 dataset/OULAD/OULAD.names
 dataset/OULAD/assessments.csv
 dataset/OULAD/courses.csv

@@ -5,9 +5,8 @@ import pickle
 
 import sys 
 sys.path.append('..')
-sys.path.append('../parent_aif360')
 
-from parent_aif360.aif360.datasets import StandardDataset
+from aif360.datasets import StandardDataset
 
 ###############################
 # Measurement related biasing #
@@ -129,10 +128,9 @@ def flip_label_bias(df: pd.DataFrame, attr: str, sens_attr: str, b_m: float, dou
 def mislabeling_nbias(dataset_orig: StandardDataset, b_m: list, noise:float = 0.1, double_disc=False, path_start: str = None) :
     """
         create Datasets objects with measurement bias
-        One Student Dataset is created for each biasing value in the list b_m
-        The datasets are each saved in "data/student_label_"+[p_u value]+".pkl" if save==True
-        Returns : Dictionary {float: StudentDataset}
-        stud_biased_dict[b_m] = StudentDataset with bias level b_m
+        One dataset is created for each biasing value in the list b_m
+        Returns : Dictionary {float: StandardDataset}
+        data_biased_dict[b_m] = StandardDataset with bias level b_m
     """
     label_multi = 'label_multi'
     df_multiclass = dataset_orig.to_df_multiclass(label_multi)
@@ -163,17 +161,19 @@ def mislabeling_nbias(dataset_orig: StandardDataset, b_m: list, noise:float = 0.
 # Undersampling related biasing #
 #################################
 
-def undersampling_biasing(df: pd.DataFrame, sens_attr: str, p_u: float, removal_distr = 'normal', cond_attr:str=None, label: str=None, fav_one=True) :
-    """ Add undersampling/selection bias to the given dataset by removing a proportion p_u of unprivileged individuals
+def undersampling_biasing(df: pd.DataFrame, sens_attr: str, removal_distr:str,  p_u:float=None, nbr_removal:int=None, cond_attr:str=None, label: str=None, fav_one=True) :
+    """ Add undersampling/selection bias to the given dataset by removing a proportion p_u of a specific group (unprivileged group for most removal_distr options)
 
     Parameters
     ----------
     df : Pandas DataFrame
-        Dataset to which the bias need to be added
+        Dataset to which the bias needs to be added
     sens_attr : string
         Name of the sensitive attribute
     p_u : float
-        Proportion of the unpriviledge group to remove, 0 means no instance is removed, 1 means all the underprivileged instances are removed
+        If specified, proportion of the undersammpled group to remove, 0 means no instance is removed, 1 means all the instances are removed
+    nbr_removal:int
+        If specified, number of individuals to remove from the undersampled group
     cond_attr : string, optional
         attribute on which the undersampling is conditioned, if None the unpriviledged instances are removed randomly
     removal_distr : string, optional
@@ -192,35 +192,44 @@ def undersampling_biasing(df: pd.DataFrame, sens_attr: str, p_u: float, removal_
     Pandas DataFrame
         New DataFrame with the biased dataset
     """
+    if p_u is None and nbr_removal is None :
+        #TODO raise an actual error
+        print("ERROR : At list one of p_u or nbr_removal needs to be specified")
+        exit()
     unpriv = 1-fav_one
-    num_unpriv = (df[sens_attr] == unpriv).sum()
-    int_p_u = int(num_unpriv*p_u) #nbr of instances to remove
     df_unpriv = df.loc[df[sens_attr] == unpriv,:]
+    num_unpriv = (df[sens_attr] == unpriv).sum()
+    if p_u is not None :
+        if nbr_removal is not None :
+            print("WARNING : For undersampling, p_u will be used and nbr_removal will be ignored")
+        nbr_unpriv_removal = int(num_unpriv*p_u) #nbr of instances to remove
+    else :
+        nbr_unpriv_removal = nbr_removal
 
-    if int_p_u > 0 :
-        if int_p_u >= num_unpriv : #all unpriv index. Needed to avoid error in sampling with probability
+    if nbr_unpriv_removal > 0 :
+        if nbr_unpriv_removal >= num_unpriv : #all unpriv index. Needed to avoid error in sampling with probability
             drop_id = df_unpriv.index.to_list()
         elif cond_attr is None or removal_distr == 'random': #random selection of index to remove
             print("undersampling : random unpriv")
             id_unpriv = df_unpriv.index.to_list()
-            drop_id = my_random_choice(id_unpriv,int_p_u)
+            drop_id = my_random_choice(id_unpriv,nbr_unpriv_removal)
         else : 
             if removal_distr == 'normal' : #probability to be removed follows the pdf of normal distribution, so index with mean values of cond_attr are more likely to be removed than outer values
                 print("undersampling : normal")
                 id_sorted = df_unpriv.sort_values(by=cond_attr, ascending=True).index.to_list()
                 prob = normal_prob(len(id_sorted))
-                drop_id = my_random_choice(id_sorted,int_p_u,p=prob)
+                drop_id = my_random_choice(id_sorted,nbr_unpriv_removal,p=prob)
             elif removal_distr == 'random_pos' :
                 print("undersampling : random_pos")
                 df_unpriv_pos = df_unpriv.loc[df[label] == 1,:]
                 id_unpriv_pos = df_unpriv_pos.index.to_list()
                 num_pos = len(id_unpriv_pos)
-                if int_p_u <=  num_pos:
-                    drop_id = my_random_choice(id_unpriv_pos,int_p_u)
+                if nbr_unpriv_removal <=  num_pos:
+                    drop_id = my_random_choice(id_unpriv_pos,nbr_unpriv_removal)
                 else :
                     df_unpriv_neg = df_unpriv.loc[df[label] == 0,:]
                     id_unpriv_neg = df_unpriv_neg.index.to_list()
-                    drop_id_neg = my_random_choice(id_unpriv_neg,int_p_u-num_pos)
+                    drop_id_neg = my_random_choice(id_unpriv_neg,nbr_unpriv_removal-num_pos)
                     drop_id = [*id_unpriv_pos, *drop_id_neg]
             elif removal_distr == 'double_random_disc_flawed' : # Original double selection bias, but doesn't work well for OULADstem
                 print("undersampling : double_random_disc")
@@ -232,8 +241,9 @@ def undersampling_biasing(df: pd.DataFrame, sens_attr: str, p_u: float, removal_
                 id_priv_neg = df_priv_neg.index.to_list()
                 nbr_priv_neg = len(id_priv_neg)
                 priv_neg_rate = nbr_priv_neg/(nbr_unpriv_pos+nbr_priv_neg)
-                nbr_priv = int(int_p_u*priv_neg_rate)
-                nbr_unpriv = int(int_p_u*(1-priv_neg_rate))
+                #TODO if want to fix problem is probably bellow. Should be nbr_priv_removal
+                nbr_priv = int(nbr_unpriv_removal*priv_neg_rate)
+                nbr_unpriv = int(nbr_unpriv_removal*(1-priv_neg_rate))
                 if nbr_unpriv < nbr_unpriv_pos :
                     drop_unpriv = my_random_choice(id_unpriv_pos,nbr_unpriv)
                 else : #drop all unpriv_pos
@@ -252,43 +262,48 @@ def undersampling_biasing(df: pd.DataFrame, sens_attr: str, p_u: float, removal_
                 df_priv_neg = df_priv.loc[df[label] == 0,:]
                 id_priv_neg = df_priv_neg.index.to_list()
                 nbr_priv_neg = len(id_priv_neg)
-                #int_p_u = p_u*(nbr_unpriv_pos+nbr_priv_neg)
-                #coeff_priv_neg = nbr_priv_neg/(nbr_unpriv_pos+nbr_priv_neg)
-                nbr_priv_undersample = int(p_u*nbr_priv_neg)
-                nbr_unpriv_undersample = int(p_u*nbr_unpriv_pos)
+                #nbr_removal = p_u*(nbr_unpriv_pos+nbr_priv_neg)
+                if p_u is not None :
+                    nbr_priv_undersample = int(p_u*nbr_priv_neg)
+                    nbr_unpriv_undersample = int(p_u*nbr_unpriv_pos)
+                else :
+                    coeff_priv_neg = nbr_priv_neg/(nbr_unpriv_pos+nbr_priv_neg)
+                    nbr_priv_undersample = int(coeff_priv_neg*nbr_removal)
+                    nbr_unpriv_undersample = int((1-coeff_priv_neg)*nbr_removal)
                 drop_unpriv = my_random_choice(id_unpriv_pos,nbr_unpriv_undersample)
                 drop_priv = my_random_choice(id_priv_neg,nbr_priv_undersample)
                 drop_id = [*drop_unpriv, *drop_priv]
             elif removal_distr == 'lower_weight' : #probility is weighted according to cond_attr, lower values more likely to be removed
                 print("undersampling : lower_weight")
                 max_val = df_unpriv[cond_attr].max()
-                mod_val = (max_val-df_unpriv[cond_attr]).pow(2)
+                mod_val = (max_val-df_unpriv[cond_attr]).pow(2)+0.25 # Addition of small value (< 1) needed so no individual has a probabability 0 to be removed
                 sum_val = mod_val.sum()
                 prob = mod_val/sum_val
-                drop_id = my_random_choice(df_unpriv.index.to_list(),int_p_u,p=prob)
+                drop_id = my_random_choice(df_unpriv.index.to_list(),nbr_unpriv_removal,p=prob)
             elif removal_distr == 'higher_weight' : #probility is weighted according to cond_attr, higher values more likely to be removed
                 print("undersampling : higher_weight")
-                mod_val = df_unpriv[cond_attr].pow(2)
+                mod_val = df_unpriv[cond_attr].pow(2)+0.25 # Addition of small value (< 1) needed so no individual has a probabability 0 to be removed
                 sum_val = mod_val.sum()
                 prob = mod_val/sum_val
-                drop_id = my_random_choice(df_unpriv.index.to_list(),int_p_u,p=prob)                
+                drop_id = my_random_choice(df_unpriv.index.to_list(),nbr_unpriv_removal,p=prob)                
             else : #remove index with lowest values of cond_attr
                 #This section is inspired by the 'Undersample' section of the dataset generation code from https://github.com/rcrupiISP/BiasOnDemand.
                 print("undersampling : lowest vals")
                 id_sorted = df.loc[df[sens_attr] == unpriv,:].sort_values(by=cond_attr, ascending=True).index.to_list()
-                drop_id = id_sorted[:int_p_u]
+                drop_id = id_sorted[:nbr_unpriv_removal]
         
         df_biased = df.drop(drop_id)
         return df_biased
     else :
         return df
 
-def undersampling_nbias(dataset_orig: StandardDataset, p_u: list, removal_distr: str, path_start: str = None) :
+def undersampling_independent_nbias(dataset_orig: StandardDataset, p_u: list, removal_distr: str, path_start: str = None) :
     """
+        Undersampling of each bias value in list p_u is done independently
         create StandardDataset objects with sampling bias and store them in a dictionary
         One Dataset is created for each biasing value in the list p_u
         The dictionary is saved in "data/"+path+"_nBiasDatasets.pkl" if path is given
-        Returns : Dictionary {float: StudentDataset}
+        Returns : Dictionary {float: StandardDataset}
         data_biased_dict[p_u] = StandardDataset with bias level p_u
     """
     label_multi = 'label_multi'
@@ -307,6 +322,66 @@ def undersampling_nbias(dataset_orig: StandardDataset, p_u: list, removal_distr:
                                         features_to_drop=[label_multi],
                                         metadata=dataset_orig.metadata)
         data_biased_dict[i] = dataset_biased
+
+    if path_start is not None :
+        path = path_start+"_nBiasDatasets.pkl"
+        with open(path,'wb') as file:
+            pickle.dump(data_biased_dict,file)
+
+    return data_biased_dict
+
+def undersampling_incremental_nbias(dataset_orig: StandardDataset, removal_distr: str, incr_bias:float=0.1, bias_levels:list=[0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9], path_start: str = None) :
+    """ create StandardDataset objects with increamental sampling bias and store them in a dictionary
+        The biased datasets are subsets of each others
+        One Dataset is created for each biasing value in the bias_levels
+    dataset_orig : StandardDataset
+        Baseline dataset in which bias should be introduced
+    incr_bias: float, optional
+        increment added to bias level at each step
+    bias_levels: list, optional
+        list of the bias intensity for each resulting dataset. The increment between values must be 
+    Returns : Dictionary {float: StandardDataset}
+        data_biased_dict[p_u] = StandardDataset with bias level p_u
+    """
+    label_multi = 'label_multi'
+    df_multiclass = dataset_orig.to_df_multiclass(label_multi)
+    sens_attr = dataset_orig.protected_attribute_names[0]
+    label = dataset_orig.label_names[0]
+    # Get total number of people in group to be undersampled
+    """
+    df_unpriv = df_multiclass.loc[df_multiclass[sens_attr] == 0,:]
+    df_unpriv_pos = df_unpriv.loc[df_multiclass[label] == 1,:]
+    id_unpriv_pos = df_unpriv_pos.index.to_list()
+     
+    nbr_unpriv_pos = len(df_unpriv.loc[df_multiclass[label] == 1,:].index.to_list())
+    df_priv = df.loc[df[sens_attr] == fav_one,:]
+    df_priv_neg = df_multiclass.loc[(df_multiclass[sens_attr] == 0) & (df_multiclass[label] == 0)]
+    id_priv_neg = df_priv_neg.index.to_list()
+    nbr_priv_neg = len(id_priv_neg)
+    """
+    if removal_distr == 'double_disc':
+        nbr_unpriv_pos = len(df_multiclass.loc[(df_multiclass[sens_attr] == 0) & (df_multiclass[label] == 1)].index.to_list())
+        nbr_priv_neg = len(df_multiclass.loc[(df_multiclass[sens_attr] == 1) & (df_multiclass[label] == 0)].index.to_list())
+        u_group_size = nbr_unpriv_pos+nbr_priv_neg
+    else : # undersampled group is the underprivileged one
+        u_group_size = len(df_multiclass.loc[df_multiclass[sens_attr] == 0,:].index.to_list())
+    inc_removal = int(u_group_size*incr_bias) #nbr of individuals to remove at each biasing incrementation
+    #inc_bias = (max_bias-min_bias)/step #can't use that because result is not rounded well
+    df_biased = df_multiclass
+    data_biased_dict = {}
+    for b in bias_levels :
+        print("Working on bias level : "+str(b))
+        if b > 0:
+            df_biased = undersampling_biasing(df_biased, sens_attr, removal_distr=removal_distr, nbr_removal=inc_removal, cond_attr=label_multi, label=label) #, cond_attr=None, removal_distr='lower_weight')
+        dataset_biased = StandardDataset(df = df_biased,
+                                        label_name=label,
+                                        protected_attribute_names=dataset_orig.protected_attribute_names,
+                                        favorable_classes= (lambda n: n>=0.5), #No change of classes label in undersampling
+                                        privileged_classes=[[1.]],
+                                        categorical_features=[],
+                                        features_to_drop=[label_multi],
+                                        metadata=dataset_orig.metadata)
+        data_biased_dict[b] = dataset_biased
 
     if path_start is not None :
         path = path_start+"_nBiasDatasets.pkl"

@@ -4,16 +4,14 @@ import pickle
 import time
 import sys 
 sys.path.append('..')
-sys.path.append('../parent_aif360')
 
 from aif360.datasets import StandardDataset
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.neural_network import MLPClassifier
 
-from ControlledBias import dataset_creation as dc
-from ControlledBias import fairness_intervention as fair
-
+import dataset_creation as dc
+import fairness_intervention as fair
 
 ###########################
 ### Division into folds ###
@@ -31,7 +29,7 @@ def save_split(dataset: StandardDataset, k: int, path_start: str) :
 def common_splits(dataset_dict, k: int, path_start: str= None) :
     """ Computes and returns a division of the datasets in 'dataset_dict' in 'k' partitions that is THE SAME for all dataset
         Partitions the datasets in 'dataset_dict' accordingly and saves on disk the partitions for each fold in a dictionary
-        Saved dictionary has bias levels as keys (float) as keys and list of the partitions for k fold as objects (list[StandardDataset])
+        Saved dictionary has bias levels (float) as keys and list of the partitions for k fold as objects (list[StandardDataset])
     dataset_dict : Dictionary {float: StandardDataset}
         Dictionary of the different biased versions of the same dataset,
         with the original (unbiased) version at key '0'
@@ -54,12 +52,11 @@ def common_splits(dataset_dict, k: int, path_start: str= None) :
     n_bias_splits = {}
     n_bias_splits[o] = split_orig
     for b in dataset_dict.keys() :
-        if b != o:
-            dataset_list = [None] * k
-            #dataset_indices = list(map(int,dataset_dict[b].instance_names))
-            for i in range(k) :
-                dataset_list[i] = get_subset(dataset_dict[b], split_orig[i])
-            n_bias_splits[b] = dataset_list
+        dataset_list = [None] * k
+        #dataset_indices = list(map(int,dataset_dict[b].instance_names))
+        for i in range(k) :
+            dataset_list[i] = get_subset(dataset_dict[b], split_orig[i])
+        n_bias_splits[b] = dataset_list
 
     if path_start is not None :
         path = path_start + '_nbias_splits_datasets.pkl'
@@ -113,26 +110,29 @@ def get_subset(dataset_orig: StandardDataset, dataset_smaller: StandardDataset) 
         for id in instance_names :
             to_keep[p] = dataset_big_indices.index(id)
             p+=1
+        to_keep.sort() #Important to allow for correct comparison of dataset content by AIF360 library
         dataset_intersect = dataset_orig.subset(to_keep) #Subset considers index position, not instance names
         #print(dataset_intersect)
         return dataset_intersect
     else :
         return dataset_orig
     
-def merge_train(split_list: list[StandardDataset], fold:int, path: str = None) :
-    """ Create a train and test split where split_list[fold] is test set and train set is all other splits merged
+def merge_train(split_list: list[StandardDataset], fold:int, valid:bool, path_start: str = None) :
+    """ Create a train set that is complimetary to test split = split_list[fold], and validation set=split_list[wrap(fold+1)] if valid==true
     """
     k = len(split_list)
     df_list = [None] * k
     weights_list = []
     size = 0
-    for i in range(k) :
-        if i is not fold :
-            df_list[i] = (split_list[i]).convert_to_dataframe()[0]
-            weights_list = weights_list + list(split_list[i].instance_weights)
-            size += len(weights_list)
+    all_folds = range(k)
+    train_folds = [x for x in all_folds if x!= fold and (not valid or x!=(fold+1)%5)]
+    for i in train_folds :
+        df_list[i] = (split_list[i]).convert_to_dataframe()[0]
+        weights_list = weights_list + list(split_list[i].instance_weights)
+        size += len(weights_list)
     merged_df = pd.concat(df_list)
     merged_df['instance_weights'] = weights_list
+    merged_df.sort_index()
     merged_dataset = StandardDataset(merged_df,
                                  label_name=split_list[0].label_names[0],
                                  favorable_classes=[split_list[0].favorable_label],
@@ -140,14 +140,13 @@ def merge_train(split_list: list[StandardDataset], fold:int, path: str = None) :
                                  privileged_classes=split_list[0].privileged_protected_attributes,
                                  instance_weights_name='instance_weights',
                                  metadata=split_list[0].metadata)
-    if path is not None :
-        path = path + '.pkl'
-        with open(path,'wb') as file:
+    if path_start is not None :
+        with open(path_start+"_train-test.pkl",'wb') as file:
             pickle.dump(merged_dataset,file)
     #print(merged_dataset.convert_to_dataframe())
     return merged_dataset
 
-def nk_merge_train(split_dict) :
+def nk_merge_train_orig(split_dict,path_start:str=None) :
     """
     Return : Dictionary {float : {int : {'train' : StandardDataset, 'test': StandardDataset}}}
     train_test_dict[bias][fold]: {'train': train set, 'test': test set}
@@ -160,8 +159,37 @@ def nk_merge_train(split_dict) :
         for i in range(k) :
             folds[i] = {'train': merge_train(split_dict[b],i), 'test': split_dict[b][i]}
         train_test_dict[b] = folds
+        
+    if path_start is not None :
+        with open(path_start+ "_train-test-nk.pkl",'wb') as file:
+            pickle.dump(train_test_dict,file)
+
     return train_test_dict
+
+def nk_merge_train(split_dict,valid:bool,path_start:str=None) :
+    """ Creates train set, test set (and validation set if valid=True) for each bias level from list of splits
     
+    Return : Dictionary {float : {int : {'train' : StandardDataset, 'test': StandardDataset}}}
+    train_test_dict[bias][fold]: {'train': train set, 'test': test set}
+    """
+    keys = split_dict.keys()
+    train_test_dict = {}
+    k = len(split_dict[list(keys)[0]])
+    for b in keys :
+        folds = {}
+        for i in range(k) :
+            if valid :
+                folds[i] = {'train': merge_train(split_dict[b],i,valid=True), 'valid': split_dict[b][(i+1)%k], 'test': split_dict[b][i]}
+            else :
+                folds[i] = {'train': merge_train(split_dict[b],i,valid=False), 'test': split_dict[b][i]}
+        train_test_dict[b] = folds
+        
+    if path_start is not None :
+        with open(path_start+ "_train-test-nk.pkl",'wb') as file:
+            pickle.dump(train_test_dict,file)
+
+    return train_test_dict
+
 def remove_test(data_orig: StandardDataset, data_test: StandardDataset) :
     """Returns a dataset containing the instances of data_orig that are not in data_test
         Returned dataset is meant for training with data_test as test set
@@ -291,10 +319,12 @@ def classifier_nbias(classifier: str, nk_dataset_dict, blinding: bool, path_star
 ### Predictions ###
 ###################
 
-def single_prediction(classifier, test_dataset: StandardDataset, blinding: bool):
+def single_prediction(classifier, test_dataset: StandardDataset, pred_type:str, blinding: bool):
     """
     blinding : Boolean
-        Wether the sensitive attribute has been used to train 'classifier' (True) or not (False)
+        Wether the sensitive attribute has been used to train 'classifier' (True) or not (False) [needed to have same features in test and train]
+    pred_type : str
+        The type of prediction : 'labels' for binary labels and 'scores' for classification probabilities
     Returns
     -------
     StandardDataset
@@ -304,11 +334,20 @@ def single_prediction(classifier, test_dataset: StandardDataset, blinding: bool)
         pred_features = fair.blind_features(test_dataset)
     else :
         pred_features = test_dataset.features
-    pred_array = classifier.predict(pred_features)
-    pred_dataset = pred_to_dataset(test_dataset,pred_array)
+    if pred_type == 'labels':
+        pred_array = classifier.predict(pred_features)
+    elif pred_type == 'scores':
+        pred_array = classifier.predict_proba(pred_features)[:,1].reshape(-1,1)
+    else :
+        print("ERROR: Not a valid prediction type. Must be 'labels' or 'scores'")
+    #print("test_dataset.labels")
+    #print(test_dataset.labels)
+    #print("pred_array")
+    #print(pred_array)
+    pred_dataset = pred_to_dataset(test_dataset,pred_array,pred_type)
     return pred_dataset
 
-def prediction_kfold(classifier_dict, split_list: list[StandardDataset], blinding: bool, path_start: str = None):
+def prediction_kfold(classifier_dict, split_list: list[StandardDataset], blinding: bool, pred_type:str, path_start: str = None):
     """
     classifier_dict : Dictionary with fold number as keys and corresponding classifier as object
         Dict. of classifiers trained on different folds of the same dataset
@@ -316,11 +355,13 @@ def prediction_kfold(classifier_dict, split_list: list[StandardDataset], blindin
         List of the different partitions of the dataset, whith split_list[i] being the test set for classifier_dict[i]
     fold_dict : Dictionary {int: {'train': StandardDataset, 'test: StandardDataset}}
         Dictionary of the train and test sets for each fold (only test is used)
+    pred_type : str
+        The type of prediction : 'labels' for binary labels and 'scores' for classification probabilities
     """
     k_pred = {} #key: fold number (= test set number), object: prediction for test set
     k = len(split_list)
     for i in range(k) :
-        k_pred[i] = single_prediction(classifier_dict[i], split_list[i], blinding=blinding)
+        k_pred[i] = single_prediction(classifier_dict[i], split_list[i], pred_type, blinding=blinding)
 
     if path_start is not None :
         path = path_start+"_pred_"+str(k)+"fold.pkl"
@@ -329,15 +370,21 @@ def prediction_kfold(classifier_dict, split_list: list[StandardDataset], blindin
     
     return k_pred
 
-def prediction_nbias(classifier_dict, label_split_dict, blinding: bool, path_start: str = None, biased_test = False) :
+def prediction_nbias(classifier_dict, nk_train_splits, set:str, pred_type:str, blinding: bool, biased_test = False, path_start: str = None) :
     """ 
     classifier_dict : Dictionary
         Nested dictionaries holding classifiers, where classifier_dict[b][f] holds the model trained on fold nbr 'f' of dataset with bias level 'b'
-    label_split_dict : Dictionary
+    nk_folds_dict : Dictionary
         Dictionary with bias level as keys and list of StandardDataset as objects,
         where label_split_dict[b][f] holds the dataset with level bias 'b' and the instances provisioned for test set of fold 'f'
+    set: str
+        One of 'valid' or 'test'. Indicates on which set the predictions should be made
+    pred_type : str
+        The type of prediction : 'labels' for binary labels and 'scores' for classification probabilities
+    blinding : Boolean
+        Wether the sensitive attribute has been used to train 'classifier' (True) or not (False) [needed to have same features in test and train]
     biased_test : Boolean
-        Wether the test set has feature bias level 'b' (True) or is a subset of the original (considered unbiased) dataset (False)
+        Wether the test set has bias level 'b' (True) or is a subset of the original (considered unbiased) dataset (False)
         (Doesn't make a difference for label bias)
     Returns
     -------
@@ -346,28 +393,35 @@ def prediction_nbias(classifier_dict, label_split_dict, blinding: bool, path_sta
     """
     n_pred = {}
     for b in classifier_dict.keys() :
-        if biased_test : #test set has the same level of bias as training set
-            test_fold = label_split_dict[b]
-        else : #test set is a subset of the original (considered unbiased) dataset
-            test_fold = label_split_dict[0]
-        #using label_split_dict[0] or label_split_dict[b] only makes a different if dataset has feature biases
-        n_pred[b] = prediction_kfold(classifier_dict[b],test_fold, blinding=blinding)
+        n_pred[b] = {} #key: fold number (= test set number), object: prediction for test set
+        for i in nk_train_splits[0].keys() :
+            if biased_test : #test set has the same level of bias as training set
+                test_fold = nk_train_splits[b][i][set]
+                #test_fold = get_subset(nbias_data_dict[b],nk_train_splits[b][i]['test'])
+            else : #test set is a subset of the original (considered unbiased) dataset
+                test_fold = nk_train_splits[0][i][set]
+                #test_fold = get_subset(nbias_data_dict[0],nk_train_splits[b][i]['test'])
+            n_pred[b][i] = single_prediction(classifier_dict[b][i], test_fold, pred_type, blinding=blinding)
+        #n_pred[b] = prediction_kfold(classifier_dict[b],test_fold, blinding=blinding)
+
+    dict_pred = {'pred':n_pred, 'orig': nk_train_splits}
 
     if path_start is not None :
         path = path_start+"_pred_all.pkl"
         with open(path,"wb") as file:
-            pickle.dump(n_pred,file)
-    
-    return n_pred
+            pickle.dump(dict_pred,file)
+
+    return dict_pred
 
 
-def pred_to_dataset(dataset_orig : StandardDataset, predictions : np.ndarray) :
-    """ Create a StandardDataset with the predicted labels and the instances for which they have been predicted
+def pred_to_dataset(dataset_orig : StandardDataset, predictions : np.ndarray, pred_type:str) :
+    """ Create a StandardDataset with the predictions (labels or score) and the instances for which they have been predicted
     dataset_orig : StandardDataset
-        Dataset containing the instances for which labels were predicted
+        Dataset containing the instances for which predictions (labels or score) were predicted
     predictions : Numpy ndarray
-        1-d array containing predicted labels, the labels order must correspond to that of the instances in dataset_orig
-    
+        1-d array containing predictions, the predictions order must correspond to that of the instances in dataset_orig
+    pred_type : str
+        The type of prediction : 'labels' for binary labels and 'scores' for classification probabilities
     Returns
     -------
     StandardDataset
@@ -375,6 +429,17 @@ def pred_to_dataset(dataset_orig : StandardDataset, predictions : np.ndarray) :
     """
     dataset_pred = dataset_orig.copy()
     #predictions = predictions.reshape(predictions.size,1) #Not needed
-    dataset_pred.labels = predictions
+    if pred_type == 'labels':
+        dataset_pred.labels = predictions
+    elif pred_type == 'scores':
+        dataset_pred.scores = predictions
+        size = len(dataset_pred.instance_names)
+        pred_labels = np.zeros((size,1))
+        for i in range(size):
+            label = predictions[i][0] > 0.5
+            pred_labels[i] = [label]
+        dataset_pred.labels = pred_labels
+    else :
+        print("ERROR: Not a valid prediction type. Must be 'labels' or 'scores'")
     dataset_pred.validate_dataset()
     return dataset_pred

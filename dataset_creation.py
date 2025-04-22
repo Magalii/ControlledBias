@@ -3,11 +3,10 @@ import numpy as np
 import pickle
 import sys
 sys.path.append('..')
-sys.path.append('../parent_aif360')
 
-from parent_aif360.aif360.datasets import StandardDataset
+from aif360.datasets import StandardDataset
 
-from ControlledBias import dataset_biasing as db
+import dataset_biasing as db
 
 def create_dataset(dataset_name: str, bias_name: str, bias_levels: list[float], path:str=None) :
     if dataset_name == 'student' or dataset_name == 'studentM' :
