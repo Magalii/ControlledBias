@@ -6,8 +6,7 @@ import pickle
 import math
 import gc
 import sys
-sys.path.append('Code/')
-sys.path.append('Code/parent_aif360')
+sys.path.append('..')
 
 from aif360.datasets import BinaryLabelDataset
 from aif360.datasets import StandardDataset
