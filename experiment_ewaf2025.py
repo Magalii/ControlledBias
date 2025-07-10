@@ -1,8 +1,8 @@
 from pandas import DataFrame
+from datetime import timedelta
 import pickle
 import time
-from datetime import timedelta
-
+import gc
 
 import sys 
 sys.path.append('..')
@@ -78,8 +78,6 @@ def run_expe(datasets,biases,preproc_methods,classifiers,blind_model,path_start)
                     if bias == 'label' : double_disc = False
                     else : double_disc = True #bias == 'labelDouble'
                     nbias_data_dict = db.mislabeling_nbias(dataset_orig, bias_levels, noise=noise, double_disc=double_disc,path_start=path)
-                    k = 10
-                    nk_folds_dict, n_folds_lists = mt.common_splits(nbias_data_dict,k,path)
                     del n_folds_lists
                     print("Label bias introduced")
                 elif bias == 'selectLow' or bias == 'selectDoubleProp' :
@@ -87,19 +85,40 @@ def run_expe(datasets,biases,preproc_methods,classifiers,blind_model,path_start)
                         removal_distr = 'double_disc'
                     elif bias == 'selectLow' :
                         removal_distr = 'lower_weight'
-                    nbias_data_dict = db.undersampling_nbias(dataset_orig, bias_levels, removal_distr, path)
-                    k = 5
-                    nk_folds_dict = mt.random_splits(nbias_data_dict,k,path)
+                    nbias_data_dict = db.undersampling_incremental_nbias(dataset_orig, removal_distr, path_start=path) #bias_levels #CHANGE
                     print("Selection bias introduced")
                 else :
                     print("WARNING Not a valid bias type")
                 del nbias_data_dict
+
             #create train and test sets for each fold and bias, nk_train_splits[bias][fold]: {'train': train set, 'test': test set}
-            nk_train_splits = mt.nk_merge_train(nk_folds_dict)
+            if computed :
+                try : #retrieve biased dataset split into k partitions
+                    with open(path+"_nbias_splits_datasets.pkl","rb") as file:
+                        nk_folds_dict = pickle.load(file)
+                except IOError as err: #create n biased datasets and split them into k partitions
+                    computed = False
+            if not computed :
+                if bias == 'label' or bias == 'labelDouble' : #same split for all folds
+                    k = 10
+                elif bias == 'selectDouble' or bias == 'selectLow' or bias == 'selectDoubleProp' : #different split for each fold
+                    k = 5
+                nk_folds_dict, _ = mt.common_splits(nbias_data_dict,k,path)
+                #nk_folds_dict[bias]: list of test folds for each bias level
+            if save : path = path_start+ds+'_'+bias+"_noValid_" #(_noValid_ because no validation set is used)
+            if computed :
+                try :#retrieve dict of train-test splits for all bias levels
+                    with open(path+"_train-test-nk.pkl","rb") as file:
+                        nk_train_splits = pickle.load(file)
+                except IOError as err: #create n biased datasets and split them into k partitions
+                    computed = False
+            if not computed :
+                nk_train_splits = mt.nk_merge_train(nk_folds_dict,valid=False,path_start=path)
+                #nk_train_splits[bias][fold]: {'train': train set, 'test': test set}
             
             #apply preprocessing if needed
             for preproc in preproc_methods :
-                if save : path = path_start+ds+'_'+bias+'_'+preproc
+                if save : path = path_start+ds+'_'+bias+"_noValid_"+preproc
                 if preproc == '' :
                     preproc_dict = nk_train_splits
                     print("No preproc was applied")
@@ -123,7 +142,7 @@ def run_expe(datasets,biases,preproc_methods,classifiers,blind_model,path_start)
                             visibility = 'Blinded'
                         else :
                             visibility = 'Aware'
-                        if save : path = path_start+ds+'_'+bias+'_'+preproc+'_'+model+visibility
+                        if save : path = path_start+ds+'_'+bias+"_noValid_"+preproc+'_'+model+visibility
                         if computed :
                             try :
                                 with open(path+"_all.pkl","rb") as file:
@@ -144,15 +163,22 @@ def run_expe(datasets,biases,preproc_methods,classifiers,blind_model,path_start)
                             except IOError as err:
                                 computed = False
                         if not computed :
-                            n_pred = mt.prediction_nbias(nk_models, nk_folds_dict, blinding=blind, path_start=path)
-                            n_pred_bias = mt.prediction_nbias(nk_models, nk_folds_dict, blinding=blind, biased_test=True, path_start=path_biased)
+                            n_pred = mt.prediction_nbias(nk_models, nk_train_splits, set='test', pred_type='labels', blinding=blind, path_start=path)
+                            n_pred_bias = mt.prediction_nbias(nk_models, nk_train_splits, set='test', pred_type='labels', blinding=blind, biased_test=True, path_start=path_biased)
                         #Manage memory
                         del nk_models, n_pred_bias, n_pred
                         end = time.perf_counter()
                         print("Experiment completed for "+str(ds)+' '+str(bias)+' '+str(preproc)+' '+str(model)+' in hh:mm:ss',timedelta(seconds=end-stop))
+                        computed = True
+                    computed = True
                 #Manage memory
                 del preproc_dict
+                gc.collect()
+                computed = True
             del nk_folds_dict, nk_train_splits
+            gc.collect()
+            computed = True
+        computed = True
 
     end = time.perf_counter()
     print("Total experiment time : hh:mm:ss",timedelta(seconds=end-start))
@@ -160,9 +186,10 @@ def run_expe(datasets,biases,preproc_methods,classifiers,blind_model,path_start)
 
 run_expe(datasets,biases,preproc_methods,classifiers,blind_model,path_start=path_start)
 # Compute metrics for all model produced (Uses a lot of RAM, if it exceeds you memory, running the script for one preprocessing method at a time should help)
+#TODO check if this statement is still necessary
 for ds in datasets :
     a.compute_all([ds],biases,preproc_methods,classifiers,blind_model,path_start=path_start)
-# Produce the same bar graph is in EWAF2025 publication
+# Produce the same bar graph as in EWAF2025 publication
 metrics_list = ['acc','StatParity','EqqOddsDiff','GenEntropyIndex']
 results_path = path_start
 plot_path = "plotsEWAF/"

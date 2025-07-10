@@ -17,7 +17,7 @@ def apply_preproc(nbias_data_dict, preproc:str, path_start:str = None):
     elif preproc == 'LFR' :
         #data_train = fair.reweight(nk_folds_dict[0.3][0])
         preproc_dict = nk_proc(nbias_data_dict,learn_fair_representation)
-        print("LFR was applied")
+        print("LFR was applied\n WARNING LFR has not been tuned properly and doesn't give usefull results.")
     elif preproc == 'massaging' :
         preproc_dict = nk_proc(nbias_data_dict,massage)
         print("Massaging was applied")
@@ -118,10 +118,10 @@ def massage(data_orig: StandardDataset, fav_one=True) :
         M = math.ceil((disc*len(df_priv)*len(df_unpriv))/len(df_orig))
     #Select the candidates for demotion or promotion and relabel
     if nbr_priv_pos > 0 :
-        id_dem = instance_priv.index.to_list()[:M] #TODO Change has been done here for massaging
+        id_dem = instance_priv.index.to_list()[:M]
         df_orig.loc[id_dem,label] = 0
     if nbr_unpriv_neg > 0 :
-        id_prom = instance_unpriv.index.to_list()[:M] #TODO Change has been done here for massaging
+        id_prom = instance_unpriv.index.to_list()[:M]
         df_orig.loc[id_prom,label] = 1
 
     massaged_dataset = StandardDataset(df = df_orig,
@@ -134,6 +134,9 @@ def massage(data_orig: StandardDataset, fav_one=True) :
 
     return massaged_dataset
     
+###################
+# Other functions #
+###################
 
 def n_proc(data_dict,proc) :
     """ Apply procedure 'proc' on dictionary such that keys in data_dict are bias levels
@@ -147,7 +150,7 @@ def n_proc(data_dict,proc) :
     return new_dict
 
 def nk_proc(data_dict,proc) :
-    """ Apply procedure 'proc' on dictionary such that data_dict[bias][fold] = {'train': train set, 'test': test set}
+    """ Apply procedure 'proc' on train and test datasets in dictionary data_dict[bias][fold] = {'train': train set, 'test': test set}
         Returns : Dictionary {float : {int : {'train' : StandardDataset, 'test': StandardDataset}}}
         Dictionary with same keys : new_dict[bias][fold]: {'train': train set, 'test': test set}
     """
