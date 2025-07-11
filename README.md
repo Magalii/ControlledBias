@@ -23,3 +23,7 @@ Running this code requires several Python module, including :
 
 - Windows environement :\
     This code was written for a Linux environment. All the paths to files needs to be changed for it to be run in a Windows environment.
+
+## Textual results
+
+The results presented in the paper graphs can also be found in textual form in the file 'textual_results.md'.
