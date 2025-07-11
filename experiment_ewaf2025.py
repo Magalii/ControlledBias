@@ -8,13 +8,13 @@ import gc
 import sys 
 sys.path.append('..')
 
-from ControlledBias.dataset.studentMale_dataset import StudentMaleDataset
-from ControlledBias.dataset.oulad_dataset import OULADDataset
-from ControlledBias import dataset_biasing as db
-from ControlledBias import model_training as mt
-from ControlledBias import analyzing as a
-from ControlledBias import fairness_intervention as fair
-from ControlledBias import plotting as plot
+from dataset.studentMale_dataset import StudentMaleDataset
+from dataset.oulad_dataset import OULADDataset
+import dataset_biasing as db
+import model_training as mt
+import analyzing as a
+import fairness_intervention as fair
+import plotting as plot
 
 start = time.perf_counter()
 stop = start

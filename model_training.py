@@ -10,7 +10,7 @@ from sklearn.neural_network import MLPClassifier
 import sys 
 sys.path.append('..')
 
-from ControlledBias import fairness_intervention as fair
+import fairness_intervention as fair
 
 
 ###########################

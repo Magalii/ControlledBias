@@ -16,7 +16,7 @@ from sklearn.metrics import f1_score
 import sys 
 sys.path.append('..')
 
-from ControlledBias import model_training as mt
+import model_training as mt
 import fairness_intervention as fair
 
 def dataset_info(BLDataset: BinaryLabelDataset, fav_one=True) :
