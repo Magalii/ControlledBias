@@ -1,7 +1,9 @@
 # My files
 data/*.pkl
-plots/*.pdf
+data/Results/*.pkl
 dataset/OULAD/*
+plotsEWAF/*.pdf
+plots_extra/*.pdf
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
