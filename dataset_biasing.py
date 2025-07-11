@@ -232,7 +232,7 @@ def undersampling_biasing(df: pd.DataFrame, sens_attr: str, removal_distr:str,  
                     drop_id_neg = my_random_choice(id_unpriv_neg,nbr_unpriv_removal-num_pos)
                     drop_id = [*id_unpriv_pos, *drop_id_neg]
             elif removal_distr == 'double_disc' : # Drop p_u*nbr_unpriv_pos and p_u*nbr_priv_neg) elements, with the undersampling proportional to the size of each of those two groups
-                print("undersampling : double_disc")
+                #print("undersampling : double_disc")
                 df_unpriv_pos = df_unpriv.loc[df[label] == 1,:]
                 id_unpriv_pos = df_unpriv_pos.index.to_list()
                 nbr_unpriv_pos = len(id_unpriv_pos)
@@ -337,7 +337,7 @@ def undersampling_incremental_nbias(dataset_orig: StandardDataset, removal_distr
     df_biased = df_multiclass
     data_biased_dict = {}
     for b in bias_levels :
-        print("Working on bias level : "+str(b))
+        #print("Working on bias level : "+str(b))
         if b > 0:
             df_biased = undersampling_biasing(df_biased, sens_attr, removal_distr=removal_distr, nbr_removal=inc_removal, cond_attr=label_multi, label=label) #, cond_attr=None, removal_distr='lower_weight')
         dataset_biased = StandardDataset(df = df_biased,

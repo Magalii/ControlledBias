@@ -4,6 +4,7 @@ import pickle
 import time
 import gc
 
+#Add path to the directory in which you placed the 'ControlledBias' folder.
 import sys 
 sys.path.append('..')
 
@@ -13,15 +14,12 @@ from ControlledBias import dataset_biasing as db
 from ControlledBias import model_training as mt
 from ControlledBias import analyzing as a
 from ControlledBias import fairness_intervention as fair
-
-#Add path to the directory in which you placed the 'ControlledBias' folder.
-import sys 
-sys.path.append('..')
+from ControlledBias import plotting as plot
 
 start = time.perf_counter()
 stop = start
 k = -1 #negative value will create error instead of silent mistake
-path_start = "data/" #Location of saved (intermediate) results TODO was Code/ControlledBias/data/
+path_start = "data/" #Location of saved (intermediate) results
 
 #You can change here the datasets, biases, preprocessing methods and bias intensity to be used in experiment
 datasets = ['student','OULADstem', 'OULADsocial']
@@ -78,7 +76,6 @@ def run_expe(datasets,biases,preproc_methods,classifiers,blind_model,path_start)
                     if bias == 'label' : double_disc = False
                     else : double_disc = True #bias == 'labelDouble'
                     nbias_data_dict = db.mislabeling_nbias(dataset_orig, bias_levels, noise=noise, double_disc=double_disc,path_start=path)
-                    del n_folds_lists
                     print("Label bias introduced")
                 elif bias == 'selectLow' or bias == 'selectDoubleProp' :
                     if bias == 'selectDoubleProp' :
@@ -89,7 +86,6 @@ def run_expe(datasets,biases,preproc_methods,classifiers,blind_model,path_start)
                     print("Selection bias introduced")
                 else :
                     print("WARNING Not a valid bias type")
-                del nbias_data_dict
 
             #create train and test sets for each fold and bias, nk_train_splits[bias][fold]: {'train': train set, 'test': test set}
             if computed :
@@ -183,16 +179,14 @@ def run_expe(datasets,biases,preproc_methods,classifiers,blind_model,path_start)
     end = time.perf_counter()
     print("Total experiment time : hh:mm:ss",timedelta(seconds=end-start))
 
-
+#Compute all models and make predictions
 run_expe(datasets,biases,preproc_methods,classifiers,blind_model,path_start=path_start)
-# Compute metrics for all model produced (Uses a lot of RAM, if it exceeds you memory, running the script for one preprocessing method at a time should help)
-#TODO check if this statement is still necessary
-for ds in datasets :
-    a.compute_all([ds],biases,preproc_methods,classifiers,blind_model,path_start=path_start)
+#Compute metrics on the models created
+a.compute_all(datasets,biases,preproc_methods,classifiers,blind_model,path_start=path_start)
 # Produce the same bar graph as in EWAF2025 publication
-metrics_list = ['acc','StatParity','EqqOddsDiff','GenEntropyIndex']
-results_path = path_start
+results_path = path_start+"Results/"
 plot_path = "plotsEWAF/"
-a.plot_bargraph(retrieval_path=results_path, dataset_list=datasets, path_start=plot_path)
+plot.bargraph_EWAF2025(retrieval_path=results_path, dataset_list=datasets, title=None, path_start=plot_path)
 #To plot extra graphs not included in the EWAF2025 publication, uncomment the following line :
-a.plot_all(datasets,biases,preproc_methods,classifiers,blind_model,bias_levels,path_start=path_start)
+#plot.plot_all(datasets,biases,preproc_methods,classifiers,blind_model,bias_levels,retrieval_path=results_path)
+#To produce bar graphs with either selection or label bias (and not both on the same graph), see plot.presentation_EWAF2025(...)
