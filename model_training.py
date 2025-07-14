@@ -122,13 +122,16 @@ def get_subset(dataset_orig: StandardDataset, dataset_smaller: StandardDataset) 
     
 def merge_train(split_list: list[StandardDataset], fold:int, valid:bool, path_start: str = None) :
     """ Create a train set that is complimetary to test split = split_list[fold], and optional validation set=split_list[wrap(fold+1)] if valid==true
-    #TODO split_list
+    split_list : list[StandardDataset]
+        list of the different dataset partitions
     fold: int
         index of the dataset partition that will be used as test set, must be a valid index of 'split_list'
-    valid:
+    valid: Boolean
         whether a validation set should be created (True) or not (False). If True, the validation set will correspond to split_list[wrap(fold+1)]
     path_start: String
         if not None, save dataset dict on disk at address 'path_start' + function postfix
+    Return : Dictionary {int : {'train' : StandardDataset, ('valid': StandardDataset,) 'test': StandardDataset}}
+    train_test_dict[bias][fold]: {'train': train set, ('valid': validation set,)'test': test set}
     """
     k = len(split_list)
     df_list = [None] * k
@@ -158,8 +161,8 @@ def merge_train(split_list: list[StandardDataset], fold:int, valid:bool, path_st
 
 def nk_merge_train_deprecated(split_dict,path_start:str=None) :
     """
-    Return : Dictionary {float : {int : {'train' : StandardDataset, 'test': StandardDataset}}}
-    train_test_dict[bias][fold]: {'train': train set, 'test': test set}
+    Return : Dictionary {float : {int : {'train' : StandardDataset, ('valid': StandardDataset,) 'test': StandardDataset}}}
+    train_test_dict[bias][fold]: {'train': train set, ('valid': validation set,) 'test': test set}
     """
     keys = split_dict.keys()
     train_test_dict = {}
@@ -177,10 +180,15 @@ def nk_merge_train_deprecated(split_dict,path_start:str=None) :
     return train_test_dict
 
 def nk_merge_train(split_dict, valid:bool, path_start:str=None) :
-    """ Creates train set, test set (and validation set if valid=True) for each bias level from list of splits
-    #TODO proper comment
-    Return : Dictionary {float : {int : {'train' : StandardDataset, 'test': StandardDataset}}}
-    train_test_dict[bias][fold]: {'train': train set, 'test': test set}
+    """ Creates train set, test set (and validation set if valid=True) for each bias level from list of data partitions
+    split_dict : Dictionary {float : list[StandardDataset]}
+        Dictionary where keys are bias levels and values are the list of data partitions for that bias level
+    valid: Boolean
+        whether a validation set should be created (True) or not (False). If True, the validation set will correspond to split_list[wrap(fold+1)]
+    path_start: String
+        if not None, save dataset dict on disk at address 'path_start' + function postfix
+    Return : Dictionary {float : {int : {'train' : StandardDataset, ('valid': StandardDataset,) 'test': StandardDataset}}}
+    train_test_dict[bias][fold]: {'train': train set, ('valid': validation set,) 'test': test set}
     """
     keys = split_dict.keys()
     train_test_dict = {}
@@ -225,8 +233,6 @@ def remove_test(data_orig: StandardDataset, data_test: StandardDataset) :
 
 def single_classifier(algo: str, dataset_train: StandardDataset, blinding: bool, path_start: str = None) :
     """ Create a classifier trained with the instances of dataset_orig that are not in dataset_test
-    Parameters
-    ----------
     algo : String ('RF'|'tree'|'neural')
         Type of classifier that should be used
     dataset_train : StandardDataset
@@ -236,9 +242,7 @@ def single_classifier(algo: str, dataset_train: StandardDataset, blinding: bool,
         blinding = True is equivalent to applying Fairness Through Unawareness
     path_start: String
         if not None, save classifiers dict on disk at address 'path_start' + function postfix
-    Returns
-    -------
-    Classifier
+    Returns : ClassifierMixin
         Model trained with dataset_train
     """
     if blinding :
@@ -270,19 +274,18 @@ def single_classifier(algo: str, dataset_train: StandardDataset, blinding: bool,
 
 def classifier_kfold(classifier: str, fold_dict, blinding: bool, path_start: str = None) :
     """ Create a classifier for each fold in split_list, trained with the instances of dataset_orig that are not in the corresponding dataset in split_list
-    Parameters
-    ----------
-    algo : String ('RF'|'tree'|'neural')
+    classifier : String ('RF'|'tree'|'neural')
         Type of classifier that will be trained with each fold in split_list
     blinding : Boolean
         Wether the sensitive attribute is used in training (False) or not (True)
     fold_dict : Dictionary {int: {'train': StandardDataset, 'test: StandardDataset}}
         Dictionary of the train and test sets for each fold (only train is used)
+    blinding : Boolean
+        Wether the sensitive attribute is used in training (False) or not (True)
+        blinding = True is equivalent to applying Fairness Through Unawareness
     path_start: String
         if not None, save dataset dict on disk at address 'path_start' + function postfix
-    Returns
-    -------
-    Dictionary
+    Returns : Dictionary
         Dictionary containing the classifier for each fold
         k_models[i] holds the model trained with the dataset held at fold_dict[i]['train']
     """
@@ -304,21 +307,16 @@ def classifier_kfold(classifier: str, fold_dict, blinding: bool, path_start: str
     
 def classifier_nbias(classifier: str, nk_dataset_dict, blinding: bool, path_start: str = None) :
     """ Create a classifier for each bias and each fold in fold accounted for in nk_dataset_dict
-    #TODO update comment
-    Parameters
-    ----------
-    algo : String ('RF'|'tree'|'neural')
+    classifier : String ('RF'|'tree'|'neural')
         Type of classifier that will be trained with each bias level and each fold in dataset_dict
-    dataset_dict : Dictionary {float : {int : {'train' : StandardDataset, 'test': StandardDataset}}}
+    nk_dataset_dict : Dictionary {float : {int : {'train' : StandardDataset, ('valid': StandardDataset,) 'test': StandardDataset}}}
         Nested dictionaries holding train and test sets for each bias and each fold (Only train set is used)
-        nk_dataset_dict[bias][fold]: {'train': train set, 'test': test set}
+        nk_dataset_dict[bias][fold]: {'train': train set, ('valid': validation set,) 'test': test set}
     blinding : Boolean
         Wether the sensitive attribute is used in training (False) or not (True)
     path_start: String
         if not None, save dataset dict on disk at address 'path_start' + function postfix
-    Returns
-    -------
-    Dictionary of dictionary
+    Returns : Dictionary {float : {int : ClassifierMixin}}
         Dictionary containing all classifiers for each bias and fold present in dataset_dict
         all_models[bias][fold] holds the model trained with the partitions complementary to dataset_dict[bias][fold], which contains the instances provisioned for the test set
     """
@@ -346,9 +344,7 @@ def single_prediction(classifier, test_dataset: StandardDataset, pred_type:str, 
         The type of prediction : 'labels' for binary labels and 'scores' for classification probabilities
     blinding : Boolean
         Wether the sensitive attribute has been used to train 'classifier' (True) or not (False)
-    Returns
-    -------
-    StandardDataset
+    Returns : StandardDataset
         A dataset with the features in 'test_dataset' and the labels predicted by 'classifier'
     """
     if blinding :
@@ -366,7 +362,6 @@ def single_prediction(classifier, test_dataset: StandardDataset, pred_type:str, 
 
 def prediction_kfold(classifier_dict, split_list: list[StandardDataset], blinding: bool, pred_type:str, path_start: str = None):
     """ Compute the predictions for all k folds given in split_list
-    #TODO make sure comment is up to date
     classifier_dict : Dictionary with fold number as keys and corresponding classifier as object
         Dict. of classifiers trained on different folds of the same dataset
     split_list :
