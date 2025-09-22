@@ -4,10 +4,10 @@ import pickle
 import math
 import gc
 
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.naive_bayes import CategoricalNB
 
 from aif360.datasets import StandardDataset
-from aif360.datasets import BinaryLabelDataset
 from aif360.algorithms.preprocessing import Reweighing
 from aif360.algorithms.preprocessing import LFR
 from aif360.algorithms.postprocessing import EqOddsPostprocessing
@@ -15,7 +15,7 @@ from aif360.algorithms.postprocessing import CalibratedEqOddsPostprocessing
 from aif360.algorithms.postprocessing import RejectOptionClassification
 from aif360.metrics import BinaryLabelDatasetMetric
 
-import model_training as mt
+#import model_training as mt
 
 #################
 # Preprocessing #
@@ -32,6 +32,9 @@ def apply_preproc(nbias_data_dict, preproc:str, path_start:str = None):
     elif preproc == 'massaging' :
         preproc_dict = nk_proc(nbias_data_dict,massage)
         print("Massaging was applied")
+    elif preproc == 'massagingRF' :
+        preproc_dict = nk_proc(nbias_data_dict,massage_RF)
+        print("MassagingRF was applied")
     else :
         print("WARNING Not a valid preproc name")
         preproc_dict = nbias_data_dict
@@ -83,8 +86,15 @@ def learn_fair_representation(data_orig: StandardDataset, fav_one=True) :
     dataset_transf = LFRobj.transform(data_orig)
     return dataset_transf
 
-def massage(data_orig: StandardDataset, fav_one=True) :
+def massage(data_orig: StandardDataset, rank_algo:str = 'NaiveBayes', fav_one=True) :
     """ Apply Massaging on 'data_orig'
+        data_orig : StandardDataset
+            dataset on which massaging is applied
+        ranking : String
+            Ranking algorithm used to determine which labels should be changed
+            'NaiveBayes' for naive bayes algo (sklearn CategoricalNB)
+            'RF' for random forest (sklearn RandomForestClassifier)
+            No significant difference could be observed between the use of Naive Bayes and Random Forest
         Returns : BinaryLabelDataset
         a copy of 'data_orig' with some label changes
         WARNING : instance_weight information will be lost
@@ -97,8 +107,14 @@ def massage(data_orig: StandardDataset, fav_one=True) :
     #TODO make sure prob are given for label 1
     X_train = data_orig.features
     Y_train = data_orig.labels.ravel()
-    NBobj = CategoricalNB()
-    NBobj.fit(X_train, Y_train)
+    if rank_algo == 'NaiveBayes' :
+        ranker = CategoricalNB()
+    elif rank_algo == 'RF' :
+        ranker = RandomForestClassifier(max_depth=6, min_samples_split=10, min_samples_leaf=10)
+    else :
+        print("WARNING Not a valid ranking algorithm. Naive Bayes is used")
+        ranker = CategoricalNB()
+    ranker.fit(X_train, Y_train)
     #Retrieve instances to be ranked (priv-pos and unpriv-neg)
     df_orig = data_orig.convert_to_dataframe()[0]
     df_priv = df_orig.loc[(df_orig[sens_attr]==priv)]
@@ -110,13 +126,13 @@ def massage(data_orig: StandardDataset, fav_one=True) :
     if nbr_priv_pos > 0 :
         #Sort priv instances according to ranker probabilities
         X_priv = df_priv_pos[data_orig.feature_names].values.copy() #priv features
-        Y_priv_prob = NBobj.predict_proba(X_priv)
+        Y_priv_prob = ranker.predict_proba(X_priv)
         instance_priv = pd.DataFrame(data=Y_priv_prob[:,1], index=df_priv_pos.index)
         instance_priv.sort_values(by=0, ascending=True, inplace=True) #Sorting by prob values, name of column is 0
     if nbr_unpriv_neg > 0 :
         #Sort unpriv instances according to ranker probabilities
         X_unpriv = df_unpriv_neg[data_orig.feature_names].values.copy() #unpriv features
-        Y_unpriv_prob = NBobj.predict_proba(X_unpriv)
+        Y_unpriv_prob = ranker.predict_proba(X_unpriv)
         instance_unpriv = pd.DataFrame(data=Y_unpriv_prob[:,1], index=df_unpriv_neg.index)
         instance_unpriv.sort_values(by=0, ascending=False, inplace=True) #Sorting by prob values, name of column is 0  
     #Get number M of labels to change in each group
@@ -144,6 +160,17 @@ def massage(data_orig: StandardDataset, fav_one=True) :
                                         metadata=data_orig.metadata)
 
     return massaged_dataset
+
+def massage_RF(data_orig: StandardDataset) :
+    """ Apply Massaging on 'data_orig' using Random Forest as the ranking algorithm
+        data_orig : StandardDataset
+            dataset on which massaging is applied
+        Returns : BinaryLabelDataset
+        a copy of 'data_orig' with some label changes
+        WARNING : instance_weight information will be lost
+    """
+    return massage(data_orig,'RF')
+    
 
 
 ##################
@@ -315,7 +342,6 @@ def n_postproc(postproc:str, n_valid_pred, n_test_pred, biased_valid:bool, path_
         print("ERROR The original dataset and it splits are not the same object for n_valid_pred and n_test_pred (n_valid_pred['orig'] != n_test_pred['orig'])")
         exit()
     nk_train_split = n_valid_pred['orig']
-    #TODO add comparison to make sure that 
     n_transf = {}
     for b in nk_train_split.keys() :
         #print("Start of postprocessing method "+postproc+ " for bias level "+str(b))
@@ -334,6 +360,8 @@ def n_postproc(postproc:str, n_valid_pred, n_test_pred, biased_valid:bool, path_
                 print("ERROR " + postproc + " not applied for bias level "+str(b)+" and fold "+str(f))
                 print("IndexError: {}".format(err))
                 n_transf[b][f] = None
+            #print("bias "+str(b)+"fold "+str(f))
+            #print(n_transf[b][f])
         gc.collect()
     print("Postprocessing method "+postproc+" was applied")
 
@@ -344,7 +372,7 @@ def n_postproc(postproc:str, n_valid_pred, n_test_pred, biased_valid:bool, path_
         with open(path,'wb') as file:
             pickle.dump(transf_dict,file)
 
-    
+    #print(transf_dict['pred'])
     return transf_dict
 
 def eq_odds_postprocess(dataset_orig, valid_pred: StandardDataset, test_pred: StandardDataset, fav_one=True) :
@@ -418,9 +446,9 @@ def reject_option(dataset_orig, valid_pred: StandardDataset, test_pred: Standard
 
 
 
-####################
+###################
 # Other functions #
-####################
+###################
 
 
 def n_proc(data_dict,proc) :

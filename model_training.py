@@ -118,7 +118,13 @@ def get_subset(dataset_orig: StandardDataset, dataset_smaller: StandardDataset) 
         return dataset_orig
     
 def merge_train(split_list: list[StandardDataset], fold:int, valid:bool, path_start: str = None) :
-    """ Create a train set that is complimetary to test split = split_list[fold], and validation set=split_list[wrap(fold+1)] if valid==true
+    """ Create a train set that is complimetary to test split = split_list[fold], and optional validation set=split_list[wrap(fold+1)] if valid==true
+    fold: int
+        index of the dataset partition that will be used as test set, must be a valid index of 'split_list'
+    valid:
+        whether a validation set should be created (True) or not (False). If True, the validation set will correspond to split_list[wrap(fold+1)]
+    path_start: String
+        if not None, save dataset dict on disk at address 'path_start' + function postfix
     """
     k = len(split_list)
     df_list = [None] * k
@@ -166,7 +172,7 @@ def nk_merge_train_orig(split_dict,path_start:str=None) :
 
     return train_test_dict
 
-def nk_merge_train(split_dict,valid:bool,path_start:str=None) :
+def nk_merge_train(split_dict, valid:bool, path_start:str=None) :
     """ Creates train set, test set (and validation set if valid=True) for each bias level from list of splits
     
     Return : Dictionary {float : {int : {'train' : StandardDataset, 'test': StandardDataset}}}
@@ -224,6 +230,9 @@ def single_classifier(algo: str, dataset_train: StandardDataset, blinding: bool,
     blinding : Boolean
         Wether the sensitive attribute is used in training (False) or not (True)
         blinding = True is equivalent to applying Fairness Through Unawareness
+    path_start: String
+        if not None, save classifier on disk at address 'path_start' + function postfix
+    
     Returns
     -------
     Classifier
@@ -264,6 +273,9 @@ def classifier_kfold(classifier: str, fold_dict, blinding: bool, path_start: str
         Type of classifier that will be trained with each fold in split_list
     fold_dict : Dictionary {int: {'train': StandardDataset, 'test: StandardDataset}}
         Dictionary of the train and test sets for each fold (only train is used)
+    path_start: String
+        if not None, save classifiers dict on disk at address 'path_start' + function postfix
+    
     Returns
     -------
     Dictionary
@@ -290,11 +302,14 @@ def classifier_nbias(classifier: str, nk_dataset_dict, blinding: bool, path_star
     """ 
     Parameters
     ----------
-    algo : String ('RF'|'tree'|'neural')
+    classifier : String ('RF'|'tree'|'neural')
         Type of classifier that will be trained with each bias level and each fold in dataset_dict
-    dataset_dict : Dictionary {float : {int : {'train' : StandardDataset, 'test': StandardDataset}}}
+    nk_dataset_dict : Dictionary {float : {int : {'train' : StandardDataset, ('valid': StandardDataset,) 'test': StandardDataset}}}
         Nested dictionaries holding train and test sets for each bias and each fold (Only train set is used)
-        nk_dataset_dict[bias][fold]: {'train': train set, 'test': test set}
+        nk_dataset_dict[bias][fold]: {'train': train set, ('valid': validation set,) 'test': test set}
+    blinding : Boolean
+        Wether the sensitive attribute is used in training (False) or not (True)path_start: String
+        if not None, save classifiers dict on disk at address 'path_start' + function postfix
     Returns
     -------
     Dictionary of dictionary
@@ -319,8 +334,8 @@ def classifier_nbias(classifier: str, nk_dataset_dict, blinding: bool, path_star
 ### Predictions ###
 ###################
 
-def single_prediction(classifier, test_dataset: StandardDataset, pred_type:str, blinding: bool):
-    """
+def single_prediction(classifier, test_dataset: StandardDataset, blinding: bool): #pred_type:str, 
+    """ Compte predictions as scores (probabilities) and labels. Only works for binary classifiers
     blinding : Boolean
         Wether the sensitive attribute has been used to train 'classifier' (True) or not (False) [needed to have same features in test and train]
     pred_type : str
@@ -334,20 +349,17 @@ def single_prediction(classifier, test_dataset: StandardDataset, pred_type:str, 
         pred_features = fair.blind_features(test_dataset)
     else :
         pred_features = test_dataset.features
-    if pred_type == 'labels':
-        pred_array = classifier.predict(pred_features)
-    elif pred_type == 'scores':
-        pred_array = classifier.predict_proba(pred_features)[:,1].reshape(-1,1)
-    else :
-        print("ERROR: Not a valid prediction type. Must be 'labels' or 'scores'")
-    #print("test_dataset.labels")
-    #print(test_dataset.labels)
-    #print("pred_array")
-    #print(pred_array)
-    pred_dataset = pred_to_dataset(test_dataset,pred_array,pred_type)
+    pred_labels = classifier.predict(pred_features)
+    pred_scores = classifier.predict_proba(pred_features)
+    if pred_scores.shape[1] == 1 : #Corner case where all individuals receive the same outcome
+        if pred_labels[0] == 0 : pred_scores = 1-pred_scores # Get proba for label=1
+        pred_scores.reshape(-1,1)
+    else : # scores for label=1 are in second columns
+        pred_scores = pred_scores[:,1].reshape(-1,1)
+    pred_dataset = pred_to_dataset(test_dataset,pred_labels,pred_scores)
     return pred_dataset
 
-def prediction_kfold(classifier_dict, split_list: list[StandardDataset], blinding: bool, pred_type:str, path_start: str = None):
+def prediction_kfold(classifier_dict, split_list: list[StandardDataset], blinding: bool, path_start: str = None): #pred_type:str,
     """
     classifier_dict : Dictionary with fold number as keys and corresponding classifier as object
         Dict. of classifiers trained on different folds of the same dataset
@@ -357,11 +369,14 @@ def prediction_kfold(classifier_dict, split_list: list[StandardDataset], blindin
         Dictionary of the train and test sets for each fold (only test is used)
     pred_type : str
         The type of prediction : 'labels' for binary labels and 'scores' for classification probabilities
+    path_start: String
+        if not None, save predictions dict on disk at address 'path_start' + function postfix
+    
     """
     k_pred = {} #key: fold number (= test set number), object: prediction for test set
     k = len(split_list)
     for i in range(k) :
-        k_pred[i] = single_prediction(classifier_dict[i], split_list[i], pred_type, blinding=blinding)
+        k_pred[i] = single_prediction(classifier_dict[i], split_list[i], blinding=blinding)
 
     if path_start is not None :
         path = path_start+"_pred_"+str(k)+"fold.pkl"
@@ -370,26 +385,28 @@ def prediction_kfold(classifier_dict, split_list: list[StandardDataset], blindin
     
     return k_pred
 
-def prediction_nbias(classifier_dict, nk_train_splits, set:str, pred_type:str, blinding: bool, biased_test = False, path_start: str = None) :
+def prediction_nbias(classifier_dict, nk_train_splits, set:str, blinding: bool, biased_test = False, path_start: str = None) :
     """ 
     classifier_dict : Dictionary
         Nested dictionaries holding classifiers, where classifier_dict[b][f] holds the model trained on fold nbr 'f' of dataset with bias level 'b'
-    nk_folds_dict : Dictionary
-        Dictionary with bias level as keys and list of StandardDataset as objects,
-        where label_split_dict[b][f] holds the dataset with level bias 'b' and the instances provisioned for test set of fold 'f'
+    nk_train_splits : Dictionary {float : {int : {'train' : StandardDataset, ('valid' : StandardDataset,) 'test': StandardDataset}}}
+        Nested dictionaries holding the train, test and optionnaly validation set for b bias and f folds
+        where nk_train_splits[bias][fold] = {'train': train set, ('valid' : validation set,)'test': test set}
     set: str
         One of 'valid' or 'test'. Indicates on which set the predictions should be made
-    pred_type : str
-        The type of prediction : 'labels' for binary labels and 'scores' for classification probabilities
+    #pred_type : str
+    #    The type of prediction : 'labels' for binary labels and 'scores' for classification probabilities
     blinding : Boolean
         Wether the sensitive attribute has been used to train 'classifier' (True) or not (False) [needed to have same features in test and train]
     biased_test : Boolean
         Wether the test set has bias level 'b' (True) or is a subset of the original (considered unbiased) dataset (False)
         (Doesn't make a difference for label bias)
+    path_start: String
+        if not None, save predictions dict on disk at address 'path_start' + function postfix
     Returns
     -------
-    Dictionary {float: {int: StandardDataset}}
-        Nested dictionaries where n_pred[b][f] holds the prediction given by model trained on fold nbr 'f' of dataset with bias level 'b'
+    Dictionary {'pred': {float: {int: StandardDataset}, 'orig': {float: {int: StandardDataset}}
+        Nested dictionaries where n_pred['pred'][b][f] holds the prediction given by model trained on fold nbr 'f' of dataset with bias level 'b' and n_pred['orig'][b][f] holds the input data given to make the predictions
     """
     n_pred = {}
     for b in classifier_dict.keys() :
@@ -401,10 +418,11 @@ def prediction_nbias(classifier_dict, nk_train_splits, set:str, pred_type:str, b
             else : #test set is a subset of the original (considered unbiased) dataset
                 test_fold = nk_train_splits[0][i][set]
                 #test_fold = get_subset(nbias_data_dict[0],nk_train_splits[b][i]['test'])
-            n_pred[b][i] = single_prediction(classifier_dict[b][i], test_fold, pred_type, blinding=blinding)
+            n_pred[b][i] = single_prediction(classifier_dict[b][i], test_fold, blinding=blinding)
         #n_pred[b] = prediction_kfold(classifier_dict[b],test_fold, blinding=blinding)
 
     dict_pred = {'pred':n_pred, 'orig': nk_train_splits}
+    #Keeping both the prediction and the original input allows future analyzes of results without having to run the experiment again
 
     if path_start is not None :
         path = path_start+"_pred_all.pkl"
@@ -414,7 +432,7 @@ def prediction_nbias(classifier_dict, nk_train_splits, set:str, pred_type:str, b
     return dict_pred
 
 
-def pred_to_dataset(dataset_orig : StandardDataset, predictions : np.ndarray, pred_type:str) :
+def pred_to_dataset(dataset_orig : StandardDataset, pred_labels : np.ndarray, pred_scores : np.ndarray) :
     """ Create a StandardDataset with the predictions (labels or score) and the instances for which they have been predicted
     dataset_orig : StandardDataset
         Dataset containing the instances for which predictions (labels or score) were predicted
@@ -429,17 +447,15 @@ def pred_to_dataset(dataset_orig : StandardDataset, predictions : np.ndarray, pr
     """
     dataset_pred = dataset_orig.copy()
     #predictions = predictions.reshape(predictions.size,1) #Not needed
-    if pred_type == 'labels':
-        dataset_pred.labels = predictions
-    elif pred_type == 'scores':
-        dataset_pred.scores = predictions
-        size = len(dataset_pred.instance_names)
-        pred_labels = np.zeros((size,1))
-        for i in range(size):
-            label = predictions[i][0] > 0.5
-            pred_labels[i] = [label]
-        dataset_pred.labels = pred_labels
-    else :
-        print("ERROR: Not a valid prediction type. Must be 'labels' or 'scores'")
+    dataset_pred.labels = pred_labels
+    dataset_pred.scores = pred_scores
+    """ # Code to retrieve labels by applying a threshold on the scores
+    size = len(dataset_pred.instance_names)
+    pred_labels = np.zeros((size,1))
+    for i in range(size):
+        label = pred_scores[i][0] > 0.5
+        pred_labels[i] = [label]
+    dataset_pred.labels = pred_labels
+    """
     dataset_pred.validate_dataset()
     return dataset_pred

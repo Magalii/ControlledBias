@@ -1,5 +1,3 @@
-import pandas as pd
-import numpy as np
 import pickle
 import sys
 sys.path.append('..')
@@ -9,9 +7,9 @@ from aif360.datasets import StandardDataset
 import dataset_biasing as db
 
 def create_dataset(dataset_name: str, bias_name: str, bias_levels: list[float], path:str=None) :
-    if dataset_name == 'student' or dataset_name == 'studentM' :
+    if dataset_name[0:7] == 'student' :
         if dataset_name == 'studentM' :
-            from ControlledBias.dataset.studentMale_dataset import StudentMaleDataset
+            from dataset.studentMale_dataset import StudentMaleDataset
             student_orig = StudentMaleDataset(balanced=False)
         else :
             student_orig = None
@@ -36,7 +34,7 @@ def student_undersampling(p_u: list, removal_distr: str, path: str = None, stude
         stud_biased_dict[p_u] = StudentDataset with bias level p_u
     """
     if student_orig==None :
-        from ControlledBias.dataset.student_dataset import StudentDataset
+        from dataset.student_dataset import StudentDataset
         student_orig = StudentDataset(balanced=True) #Standard preproc -> 'age' is kept as numerical, sensitive attribute is 'sex'
     print(student_orig)
     label_multi = 'label_multi'
@@ -72,7 +70,7 @@ def student_mislabeling(b_m: list, path: str = None, student_orig=None) :
         stud_biased_dict[b_m] = StudentDataset with bias level b_m
     """
     if student_orig==None :
-        from ControlledBias.dataset.student_dataset import StudentDataset
+        from dataset.student_dataset import StudentDataset
         student_orig = StudentDataset(balanced=True) #Standard preproc -> 'age' is kept as numerical, sensitive attribute is 'sex'
     label_multi = 'label_multi'
     df_multiclass = student_orig.to_df_multiclass(label_multi)

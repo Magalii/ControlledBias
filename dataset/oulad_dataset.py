@@ -2,11 +2,10 @@ import pandas as pd
 import numpy as np
 
 import sys 
-sys.path.append('Code/')
-sys.path.append('Code/parent_aif360')
+sys.path.append('../')
 from aif360.datasets import StandardDataset
 
-path_to_data = 'Code/ControlledBias/dataset/'
+path_to_data = 'dataset/'
 
 default_mappings = {
     'label_maps': [{1.0: 'pass', 0.0: 'fail'}],
@@ -19,7 +18,7 @@ class OULADDataset(StandardDataset):
         or https://www.nature.com/articles/sdata2017171
     """
 
-    def __init__(self, df = None, domain:str = 'all',
+    def __init__(self, df = None, domain:str = 'all', hard_problem:bool = False,
                  label_name='final_result',
                  favorable_classes= ["Distinction","Pass"], #(lambda n: n=="Pass" or n=="Distinction"),
                  protected_attribute_names=['gender'],
@@ -30,18 +29,20 @@ class OULADDataset(StandardDataset):
                  na_values=[], custom_preprocessing=None,
                  metadata=default_mappings):
         """
-            domain : 'all' for complete dataset, 'stem' for module FFF with no duplicate students, 'social' for module BBB with no duplicate students
+            domain : 'all' for complete dataset, 'stem' for module FFF, 'social' for module BBB (with no duplicate students in all cases)
+            hard_problem : True to make to prediction problem harder by only using features in studentInfo.csv, False to add VLE related features (recommended for higher accuracy)
             See :obj:`StandardDataset` for a description of the other arguments
         """
 
         if df is None :
             try :
                 df = pd.read_csv(path_to_data+ 'OULAD/studentInfo.csv', na_values=na_values)
-                df_assessments = pd.read_csv(path_to_data+ 'OULAD/assessments.csv', na_values=na_values)
-                df_studentAssessment = pd.read_csv(path_to_data+ 'OULAD/studentAssessment.csv', na_values=na_values)
-                df_studentVle = pd.read_csv(path_to_data+ 'OULAD/studentVle.csv', na_values=na_values)
-                df_vle = pd.read_csv(path_to_data+ 'OULAD/vle.csv', na_values=na_values)
-                df_courses = pd.read_csv(path_to_data+ 'OULAD/courses.csv', na_values=na_values)
+                if not hard_problem :
+                    df_assessments = pd.read_csv(path_to_data+ 'OULAD/assessments.csv', na_values=na_values)
+                    df_studentAssessment = pd.read_csv(path_to_data+ 'OULAD/studentAssessment.csv', na_values=na_values)
+                    df_studentVle = pd.read_csv(path_to_data+ 'OULAD/studentVle.csv', na_values=na_values)
+                    df_vle = pd.read_csv(path_to_data+ 'OULAD/vle.csv', na_values=na_values)
+                    df_courses = pd.read_csv(path_to_data+ 'OULAD/courses.csv', na_values=na_values)
             except IOError as err:
                 print("IOError: {}".format(err))
                 print("To use this class, please download the files for the OULAD dataset, for example at this link:")
@@ -53,8 +54,7 @@ class OULADDataset(StandardDataset):
         #Filter unkown values (noted as '?' in csv file)
         df = df.replace(to_replace='?', value=np.nan).dropna()
 
-        #Retrieve wanted students and preprocess to add features related to VLE
-        #Features related to VLE have been reproduced from Riazy et al, 2020 "Fairness in Learning Analytics: Student At-risk Prediction in Virtual Learning Environments" doi: 10.5220/0009324100150025
+        #Retrieve wanted students and 
         if domain != 'all' :
             categorical_features=['code_presentation','region', 'highest_education', 'imd_band', 'disability', 'age_band']
             features_to_drop=['id_student', 'index', 'code_module']
@@ -64,27 +64,29 @@ class OULADDataset(StandardDataset):
                 module = 'BBB'
             #Select only students in the desired module
             df = df.loc[df['code_module'] == module,:]
-            #Remove duplicated students, keep last occurence
-            for id in df.index :
-                df_rest = df.loc[id:,:]
-                same_students = df_rest.loc[df_rest['id_student'] == df_rest.loc[id,'id_student'],:]
-                if len(same_students) > 1 :
-                    df.drop(id,inplace=True)
+
+        #Remove duplicated students, keep last occurence (last presentation (and course if domain==all) they did)
+        for id in df.index :
+            df_rest = df.loc[id:,:]
+            same_students = df_rest.loc[df_rest['id_student'] == df_rest.loc[id,'id_student'],:]
+            if len(same_students) > 1 :
+                df.drop(id,inplace=True)
+
+        if not hard_problem : # preprocess to add features related to VLE
+        #Features related to VLE have been reproduced from Riazy et al, 2020 "Fairness in Learning Analytics: Student At-risk Prediction in Virtual Learning Environments" doi: 10.5220/0009324100150025
             #Reduce extra df to wanted module
-            # WARNING may contain info about same student for different presentation
             df_assessments = df_assessments[df_assessments['code_module']==module]
             df_studentVle = df_studentVle[df_studentVle['code_module']==module]
             df_vle = df_vle[df_vle['code_module']==module]
             df_courses = df_courses[df_courses['code_module']==module]
 
-            #print(df)
             #Compute wanted features from different dataframes    
             df_studentAssessment = df_studentAssessment.merge(df_assessments, how='inner', on='id_assessment',validate='many_to_one')
             for stud in df['id_student'] :
                 stud_presentation = df.loc[df['id_student']==stud,'code_presentation'].iloc()[0] #use iloc to access value by position
                 #Features num_CMA and num_TMA
                 df_stud_assess = df_studentAssessment.loc[(df_studentAssessment['id_student']==stud)
-                                                  & (df_studentAssessment['code_presentation']==stud_presentation),:]
+                                                & (df_studentAssessment['code_presentation']==stud_presentation),:]
                 df.loc[df['id_student']==stud,'num_CMA'] = len(df_stud_assess.loc[(df_studentAssessment['assessment_type']=='CMA'),:])
                 df.loc[df['id_student']==stud,'num_TMA'] = len(df_stud_assess.loc[(df_studentAssessment['assessment_type']=='TMA'),:])
                 df_stud_assess = None
@@ -93,7 +95,7 @@ class OULADDataset(StandardDataset):
                 #                                  & (df_studentAssessment['assessment_type']=='CMA'),:]
                 #Features related to VLE
                 df_stud_vle = df_studentVle.loc[(df_studentVle['id_student']==stud)
-                                             & (df_studentVle['code_presentation']==stud_presentation),:]
+                                            & (df_studentVle['code_presentation']==stud_presentation),:]
                 #num_logings : total number of login over the module presentation
                 num_logins = len(df_stud_vle)
                 df.loc[df['id_student']==stud,'num_logins'] = num_logins
@@ -103,27 +105,27 @@ class OULADDataset(StandardDataset):
                 #Number of clicks on resource pages 'forumng', 'glossary', 'homepage', 'resource'
                 #forumng
                 forum_id = df_vle.loc[(df_vle['code_presentation']==stud_presentation) & (df_vle['activity_type']=="forumng")
-                                      ,'id_site'].iloc()[0]
+                                    ,'id_site'].iloc()[0]
                 df_forum = df_stud_vle.loc[(df_stud_vle['code_presentation']==stud_presentation) 
-                                           & (df_stud_vle['id_site']==forum_id),:]
+                                        & (df_stud_vle['id_site']==forum_id),:]
                 df.loc[df['id_student']==stud,'forumng'] = sum(df_forum['sum_click'])
                 #glossary
                 gloss_id = df_vle.loc[(df_vle['code_presentation']==stud_presentation) & (df_vle['activity_type']=="glossary")
-                                      ,'id_site'].iloc()[0]
+                                    ,'id_site'].iloc()[0]
                 df_gloss = df_stud_vle.loc[(df_stud_vle['code_presentation']==stud_presentation)
-                                           & (df_stud_vle['id_site']==gloss_id),:]
+                                        & (df_stud_vle['id_site']==gloss_id),:]
                 df.loc[df['id_student']==stud,'glossary'] = sum(df_gloss['sum_click'])
                 #homepage
                 home_id = df_vle.loc[(df_vle['code_presentation']==stud_presentation) & (df_vle['activity_type']=="homepage")
-                                      ,'id_site'].iloc()[0]
+                                    ,'id_site'].iloc()[0]
                 df_home = df_stud_vle.loc[(df_stud_vle['code_presentation']==stud_presentation)
-                                           & (df_stud_vle['id_site']==home_id),:]
+                                        & (df_stud_vle['id_site']==home_id),:]
                 df.loc[df['id_student']==stud,'homepage'] = sum(df_home['sum_click'])
                 #resource
                 reso_id = df_vle.loc[(df_vle['code_presentation']==stud_presentation) & (df_vle['activity_type']=="resource")
                                     ,'id_site'].iloc()[0]
                 df_reso = df_stud_vle.loc[(df_stud_vle['code_presentation']==stud_presentation)
-                                           & (df_stud_vle['id_site']==reso_id),:]
+                                        & (df_stud_vle['id_site']==reso_id),:]
                 df.loc[df['id_student']==stud,'resource'] = sum(df_reso['sum_click'])
 
             #Allow Python to free memory

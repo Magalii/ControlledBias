@@ -1,12 +1,13 @@
 # My files
 data/*.pkl
+data/*_dataset
+data/Results/*.pkl
+dataset/student_df
 dataset/OULAD/OULAD.names
-dataset/OULAD/assessments.csv
-dataset/OULAD/courses.csv
-dataset/OULAD/studentAssessment.csv
-dataset/OULAD/studentRegistration.csv
-dataset/OULAD/studentVle.csv
-dataset/OULAD/vle.csv
+dataset/OULAD/*.csv
+RFs/tree_*
+expe_draft.py
+expe_results.py
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

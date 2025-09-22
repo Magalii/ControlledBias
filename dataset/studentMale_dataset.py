@@ -2,11 +2,10 @@ import pandas as pd
 import numpy as np
 
 import sys
-sys.path.append('Code/')
-sys.path.append('Code/parent_aif360')
+sys.path.append('../')
 from aif360.datasets import StandardDataset
 
-path_to_data = 'Code/ControlledBias/dataset/'
+path_to_data = 'dataset/'
 
 default_mappings = {
     'label_maps': [{1.0: 'pass', 0.0: 'fail'}],
