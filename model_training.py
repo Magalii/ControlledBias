@@ -1,7 +1,6 @@
 import numpy as np
 import pandas as pd
 import pickle
-import time
 import sys 
 sys.path.append('..')
 
@@ -10,7 +9,6 @@ from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.neural_network import MLPClassifier
 
-import dataset_creation as dc
 import fairness_intervention as fair
 
 ###########################

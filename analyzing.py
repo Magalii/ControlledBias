@@ -1,4 +1,3 @@
-import matplotlib.pyplot as plt
 import multiprocessing as mp
 import pandas as pd
 import numpy as np
@@ -9,6 +8,7 @@ import math
 import gc
 import sys
 sys.path.append('../')
+sys.path.append('parent_aif360')
 
 from aif360.datasets import BinaryLabelDataset
 from aif360.datasets import StandardDataset
@@ -18,8 +18,6 @@ from sklearn.preprocessing import MaxAbsScaler
 from sklearn.metrics import f1_score
 from sklearn.metrics import roc_auc_score
 from sklearn.tree import export_text
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.ensemble import RandomForestClassifier
 
 import model_training as mt
 import fairness_intervention as fair
@@ -138,6 +136,7 @@ def pred_info(test_dataset: StandardDataset, pred_dataset: StandardDataset, fav_
         results['BCC_penalty'] = cm.bcc(pred_dataset,penalty=1)
         results['EqqOppDiff'] = metrics_object.equal_opportunity_difference() # = TPRunpriv-TPRpriv = FNRpriv-FNRunpriv
         results['EqqOddsDiff'] = metrics_object.equalized_odds_difference() 
+        results['AvOddsDiff'] = metrics_object.average_odds_difference()
         results['FalseDiscRate'] = metrics_object.false_discovery_rate_difference()
         results['FalsePosRateDiff'] = metrics_object.false_positive_rate_difference()
         results['FalseNegRateDiff'] = metrics_object.false_negative_rate_difference()
@@ -148,7 +147,8 @@ def pred_info(test_dataset: StandardDataset, pred_dataset: StandardDataset, fav_
         #print(metrics_object.binary_confusion_matrix())
     else :
         results = dict.fromkeys(['base_rate','acc','accBal','TPR','TNR','FPR','FNR','F1','ROCAUC',
-                                 'StatParity','Consistency','BlindCons','Cons_mine','BCC','BCC_penalty','EqqOppDiff','EqqOddsDiff','FalseDiscRate','FalsePosRateDiff','FalseNegRateDiff','GenEntropyIndex',
+                                 'StatParity','Consistency','BlindCons','Cons_mine','BCC','BCC_penalty','EqqOppDiff','EqqOddsDiff','AvOddsDiff',
+                                 'FalseDiscRate','FalsePosRateDiff','FalseNegRateDiff','GenEntropyIndex',
                                  'ConfMatrAll','ConfMatrUnpriv','ConfMatrPriv',]
                                  ,np.nan)
     #del test_dataset, pred_dataset, metrics_object, pred_BLD_metrics
@@ -295,12 +295,12 @@ def metrics_for_plot(nk_results_dict, path_start: str = None, memory_save = Fals
                                 nan_count += 1
                         #print("bias level :"+str(b))
                         #print(values)
-                        if nan_count <= len(fold_keys)/5 :
-                            metrics_by_bias[metric]['mean'][i] = np.mean(values)
-                            metrics_by_bias[metric]['stdev'][i] = np.std(values)
-                        else : #Too much values are nan for usefull results (post-proc has failed for more than 20% of folds)
+                        if nan_count > len(fold_keys)/2 : #Too much values are nan for usefull results (post-proc has failed for more than 50% of folds)
                             metrics_by_bias[metric]['mean'][i] = float('nan')
                             metrics_by_bias[metric]['stdev'][i] = float('nan')
+                        else :
+                            metrics_by_bias[metric]['mean'][i] = np.mean(values)
+                            metrics_by_bias[metric]['stdev'][i] = np.std(values)
                         i+=1
                 else :
                     pass
@@ -557,8 +557,8 @@ def compute_all(data_list, bias_list, preproc_list, postproc_list, model_list, b
             True if the bias levels used for training go from 0 to 1 (prefix 0to1_ for file paths), False otherwise 
         Returns None
     """
-    if no_valid : valid = "_noValid_"
-    else : valid = '_'
+    if no_valid : valid = "_noValid"
+    else : valid = ''
     if to1 : pref = "0to1_"
     else : pref = ''
     for ds in data_list :
@@ -576,11 +576,9 @@ def compute_all(data_list, bias_list, preproc_list, postproc_list, model_list, b
             for preproc in preproc_list :
                 for model in model_list :
                     for blind in blinding_list :
-                        if blind :
-                            visibility = 'Blinded'
-                        else :
-                            visibility = 'Aware'
-                        path = path_start+pref+ds+'_'+bias+valid+preproc+'_'+model+visibility
+                        if blind : visibility = 'Blinded'
+                        else : visibility = 'Aware'
+                        path = path_start+pref+ds+'_'+bias+valid+'_'+preproc+'_'+model+visibility
                         if len(postproc_list) == 0 :
                             print("\nComputing metrics for "+path)
                             #Retrieve predictions
@@ -590,7 +588,7 @@ def compute_all(data_list, bias_list, preproc_list, postproc_list, model_list, b
                             with open(path_biased+"_pred_all.pkl","rb") as file:
                                 n_pred_bias = pickle.load(file)
                             # Compute in distinct process for memory management
-                            path_res = path_start+"Results/"+pref+ds+'_'+bias+valid+preproc+'_'+model+visibility+'_'
+                            path_res = path_start+"Results/"+pref+ds+'_'+bias+valid+'_'+preproc+'_'+model+visibility+'_'
                             proc1 = mp.Process(target = metrics_all_format, args=(n_pred['pred'], n_pred['orig'], path_res, False, model, ds, bias,sens_attr,to1))
                             proc1.start()
                             proc1.join()
@@ -603,7 +601,7 @@ def compute_all(data_list, bias_list, preproc_list, postproc_list, model_list, b
                             for post_proc in postproc_list :
                                 print("\nComputing metrics for "+path)
                                 #Retrieve predictions
-                                path = path_start+pref+ds+'_'+bias+valid+preproc+'_'+model+visibility+'_'+post_proc
+                                path = path_start+pref+ds+'_'+bias+valid+'_'+preproc+'_'+model+visibility+'_'+post_proc
                                 path_biasedValidFairTest = path+"-BiasedValidFairTest"
                                 path_biasedValidBiasedTest = path+"-BiasedValidBiasedTest"
                                 path_fairValidFairTest = path+"-FairValidFairTest"
@@ -615,7 +613,7 @@ def compute_all(data_list, bias_list, preproc_list, postproc_list, model_list, b
                                     n_pred_transf_FairValidFairTest = pickle.load(file)
                                 # Compute in distinct process for memory management
                                 #TODO add it if I do fairTruth and biasedTest
-                                path_res = path_start+"Results/"+pref+ds+'_'+bias+valid+preproc+'_'+model+visibility+'_'+post_proc
+                                path_res = path_start+"Results/"+pref+ds+'_'+bias+valid+'_'+preproc+'_'+model+visibility+'_'+post_proc
                                 path_res_biasedValidFairTest = path_res+"-BiasedValidFairTest"
                                 path_res_biasedValidBiasedTest = path_res+"-BiasedValidBiasedTest"
                                 path_res_fairValidFairTest = path_res+"-FairValidFairTest"
