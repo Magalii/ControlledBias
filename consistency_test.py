@@ -1,3 +1,10 @@
+"""
+    Tests for the metrics related to consistency implemented in file consistency_metrics.py
+"""
+
+import sys
+sys.path.append('../parent_aif360')
+
 from aif360.datasets import StandardDataset
 
 from dataset.studentMale_dataset import StudentMaleDataset

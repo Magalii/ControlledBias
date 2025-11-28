@@ -1,3 +1,7 @@
+"""
+    Code to applay bias mitigation methods
+"""
+
 import numpy as np
 import pandas as pd
 import pickle
@@ -15,29 +19,44 @@ from aif360.algorithms.postprocessing import CalibratedEqOddsPostprocessing
 from aif360.algorithms.postprocessing import RejectOptionClassification
 from aif360.metrics import BinaryLabelDatasetMetric
 
-#import model_training as mt
-
 #################
 # Preprocessing #
 #################
 
-def apply_preproc(nbias_data_dict, preproc:str, path_start:str = None):
+def apply_preproc(nk_datasets, preproc:str, path_start:str = None):
+    """ Apply the chosen preprocessing bias mitigation methods all the datasets in 'nk_datasets'
+    nk_datasets : Dictionary {float : {int : {'train': train set, ('valid': validation set,) 'test': test set}}}
+        Dictionary containing all the splitted datasets the preprocessing should be applied to (validation set is not used and will be discarded)
+        nk_datasets[bias][fold]: {'train': train set, ('valid': validation set,) 'test': test set}
+     preproc: str
+        The chosen postprossing, must be one of the following :
+        'reweighting',
+        'LFR' for Learning Fair Representation,
+        'massaging' for massaging using a bayesian ranker,
+        'massagingRF' for massaging using a random forest ranker,
+    path_start : String
+        Path at which the dictionary will be saved, if None dictionary is not saved
+
+    Returns: Dictionary {float : {int : {'train' : StandardDataset, 'test': StandardDataset}}}
+        Dictionary that contains all the datasets with mitigated train and test sets
+        preproc_dict[bias][fold]: {'train': train set, 'test': test set}
+    """
     if preproc == 'reweighting' :
-        preproc_dict = nk_proc(nbias_data_dict,reweight)
+        preproc_dict = nk_proc(nk_datasets,reweight)
         print("Reweighting was applied")
     elif preproc == 'LFR' :
         #data_train = fair.reweight(nk_folds_dict[0.3][0])
-        preproc_dict = nk_proc(nbias_data_dict,learn_fair_representation)
+        preproc_dict = nk_proc(nk_datasets,learn_fair_representation)
         print("LFR was applied\n WARNING LFR has not been tuned properly and doesn't give usefull results.")
     elif preproc == 'massaging' :
-        preproc_dict = nk_proc(nbias_data_dict,massage)
+        preproc_dict = nk_proc(nk_datasets,massage)
         print("Massaging was applied")
     elif preproc == 'massagingRF' :
-        preproc_dict = nk_proc(nbias_data_dict,massage_RF)
+        preproc_dict = nk_proc(nk_datasets,massage_RF)
         print("MassagingRF was applied")
     else :
         print("WARNING Not a valid preproc name")
-        preproc_dict = nbias_data_dict
+        preproc_dict = nk_datasets
 
     if path_start is not None :
         path = path_start + '_nkdatasets.pkl'
@@ -48,6 +67,8 @@ def apply_preproc(nbias_data_dict, preproc:str, path_start:str = None):
 
 def blind_features(data_orig: StandardDataset) :
     """ Fairness Through Unawareness, a.k.a Blinding
+    data_orig: StandardDataset
+        Dataset on which mitigation is applied
     Returns : np.array
         features of StandardDataset 'data_orig' without the protected attribute
         (if more than one sensitive attribute is listed for data_orig, only the first one of the list 'protected_attribute_names' is remvoved)
@@ -59,6 +80,10 @@ def blind_features(data_orig: StandardDataset) :
 def reweight(data_orig: StandardDataset, fav_one=True) :
     """ Reweighting of 'data_orig'
     Division by 0 warning comes from RW.fit and leads to an inf value within fit function. Reweighing is still operational.
+    data_orig: StandardDataset
+        Dataset on which mitigation is applied
+    fav_one : Boolean, optional
+        Wether the favorable value for the sensitive attribute is 1 (True) or 0 (False)
     Returns : BinaryLabelDataset
       a copy of 'data_orig' with transformed instance weights
     """
@@ -72,6 +97,10 @@ def reweight(data_orig: StandardDataset, fav_one=True) :
 
 def learn_fair_representation(data_orig: StandardDataset, fav_one=True) :
     """ Apply "Learning fair representation" on 'data_orig'
+    data_orig: StandardDataset
+        Dataset on which mitigation is applied
+    fav_one : Boolean, optional
+        Wether the favorable value for the sensitive attribute is 1 (True) or 0 (False)
     Returns : BinaryLabelDataset
       a copy of 'data_orig' with new labels
     """
@@ -90,11 +119,15 @@ def massage(data_orig: StandardDataset, rank_algo:str = 'NaiveBayes', fav_one=Tr
     """ Apply Massaging on 'data_orig'
         data_orig : StandardDataset
             dataset on which massaging is applied
-        ranking : String
+        rank_algo : String
             Ranking algorithm used to determine which labels should be changed
             'NaiveBayes' for naive bayes algo (sklearn CategoricalNB)
             'RF' for random forest (sklearn RandomForestClassifier)
             No significant difference could be observed between the use of Naive Bayes and Random Forest
+        path_start : String
+            Path at which the dictionary will be saved, if None dictionary is not saved
+        fav_one : Boolean, optional
+            Wether the favorable value for the sensitive attribute is 1 (True) or 0 (False)
         Returns : BinaryLabelDataset
         a copy of 'data_orig' with some label changes
         WARNING : instance_weight information will be lost
@@ -190,6 +223,8 @@ def apply_postproc_orig(postproc:str, dataset_true: StandardDataset, dataset_pre
         Dataset containing labels considered as true
     dataset_pred: StandardDataset
         Dataset containing predicted labels
+    path_start : String
+        Path at which the dictionary will be saved, if None dictionary is not saved
     Returns: StandardDataset
         Dataset containing the transformed labels
     """
@@ -236,6 +271,9 @@ def apply_postproc(postproc:str, dataset_orig: StandardDataset, valid_pred: Stan
     test_pred: StandardDataset
         Test dataset with predicted classification probabilities (scores). Must be the same instances as in dataset_orig['test']
         Set that will undergo post-processing
+    path_start : String
+        Path at which the dictionary will be saved, if None dictionary is not saved
+
     Returns: StandardDataset
         Dataset containing the transformed labels
     """
@@ -282,6 +320,9 @@ def n_postproc_orig(postproc:str, n_dataset_true, n_dataset_pred, biased_truth:b
         Nested dictionaries holding datasets with predicted labels. n_dataset_pred[b][f] holds the predictions for bias level 'b' and fold nbr 'f'
     biased_truth:bool
         Whether the labels considered as ground truth for debiasing is that of the biased train set (True) or an unbiased version (False)
+    path_start : String
+        Path at which the dictionary will be saved, if None dictionary is not saved
+
     Returns: Dictionary {float: {int: StandardDataset}}
         Nested dictionaries where n_transf[b][f] holds the transformed predictions for fold nbr 'f' and bias level 'b'
     """
@@ -301,12 +342,12 @@ def n_postproc_orig(postproc:str, n_dataset_true, n_dataset_pred, biased_truth:b
             try :
                 n_transf[b][f] = apply_postproc(postproc, dataset_true, n_dataset_pred[b][f])
             except ValueError as err:
-                print("ERROR " + postproc + " not applied for bias level "+str(b)+" and fold "+str(f))
-                print("ValueError: {}".format(err))
+                #print("ERROR " + postproc + " not applied for bias level "+str(b)+" and fold "+str(f))
+                #print("ValueError: {}".format(err))
                 n_transf[b][f] = None
             except IndexError as err:
-                print("ERROR " + postproc + " not applied for bias level "+str(b)+" and fold "+str(f))
-                print("IndexError: {}".format(err))
+                #print("ERROR " + postproc + " not applied for bias level "+str(b)+" and fold "+str(f))
+                #print("IndexError: {}".format(err))
                 n_transf[b][f] = None
         gc.collect()
     print("Postprocessing method "+postproc+" was applied")
@@ -335,10 +376,13 @@ def n_postproc(postproc:str, n_valid_pred, n_test_pred, biased_valid:bool, path_
     n_test_pred: Dictionary {float: {int: StandardDataset}}
         Nested dictionaries holding test datasets with predicted classification probabilities (scores). n_test_pred[b][f] holds the predictions for bias level 'b' and fold nbr 'f'
         Set that will undergo post-processing
+    path_start : String
+        Path at which the dictionary will be saved, if None dictionary is not saved
+
     Returns: Dictionary {float: {int: StandardDataset}}
         Nested dictionaries where n_transf[b][f] holds the transformed predictions for fold nbr 'f' and bias level 'b'
     """
-    if n_valid_pred['orig'] != n_test_pred['orig'] :
+    if n_valid_pred['orig'] != n_test_pred['orig'] : # Orig contains the whole datasets and its splits, including valid and test
         print("ERROR The original dataset and it splits are not the same object for n_valid_pred and n_test_pred (n_valid_pred['orig'] != n_test_pred['orig'])")
         exit()
     nk_train_split = n_valid_pred['orig']
@@ -385,6 +429,9 @@ def eq_odds_postprocess(dataset_orig, valid_pred: StandardDataset, test_pred: St
     test_pred: StandardDataset
         Test dataset with predicted classification probabilities (scores). Must be the same instances as in dataset_orig['test']
         Set that will undergo post-processing
+    fav_one : Boolean, optional
+            Wether the favorable value for the sensitive attribute is 1 (True) or 0 (False)
+
     Returns: StandardDataset
         Dataset containing transformed labels
     Raises ValueError if dataset_true and dataset_pred don't contain the same instances
@@ -408,6 +455,9 @@ def calibrated_eq_odds_postprocess(dataset_orig, valid_pred: StandardDataset, te
     test_pred: StandardDataset
         Test dataset with predicted classification probabilities (scores). Must be the same instances as in dataset_orig['test']
         Set that will undergo post-processing
+    fav_one : Boolean, optional
+        Wether the favorable value for the sensitive attribute is 1 (True) or 0 (False)
+
     Returns: StandardDataset
         Dataset containing transformed labels
     """
@@ -431,6 +481,11 @@ def reject_option(dataset_orig, valid_pred: StandardDataset, test_pred: Standard
         Set that will undergo post-processing
     optimisation_metric: str
         Name of the metric to optimize, must be “Statistical parity difference”, “Average odds difference” or “Equal opportunity difference”
+    fav_one : Boolean, optional
+        Wether the favorable value for the sensitive attribute is 1 (True) or 0 (False)
+
+    Returns: StandardDataset
+        Dataset containing transformed labels
     """
     sens_attr = test_pred.protected_attribute_names[0]
     priv = [{sens_attr : int(fav_one)}]

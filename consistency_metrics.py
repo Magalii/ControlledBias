@@ -1,14 +1,11 @@
 import numpy as np
-import csv
-
 from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import MaxAbsScaler
-from sklearn.utils import check_X_y
 import sys
 sys.path.append('..')
+sys.path.append('../parent_aif360')
 
 from aif360.datasets import BinaryLabelDataset
-
 import fairness_intervention as fair
 
 """

@@ -1,8 +1,16 @@
+""""
+    Method related to model training and usage, includes :
+    - splitting of datasets in different folds
+    - fairness-agnostic training algorithms
+    - methods to obtain model predictions
+"""
+
 import numpy as np
 import pandas as pd
 import pickle
 import sys 
 sys.path.append('..')
+sys.path.append('parent_aif360')
 
 from aif360.datasets import StandardDataset
 from sklearn.tree import DecisionTreeClassifier
@@ -17,6 +25,8 @@ import fairness_intervention as fair
 
 def save_split(dataset: StandardDataset, k: int, path_start: str) :
     """ Creates k partition of dataset and saves it to path_k_splits.pkl
+        path_start: String
+            save dataset dict on disk at address 'path_start' + function postfix
         Returns None
     """
     split_data = dataset.split(k,shuffle=True)
@@ -33,10 +43,10 @@ def common_splits(dataset_dict, k: int, path_start: str= None) :
         with the original (unbiased) version at key '0'
     path_start: String
         if not None, save dataset dict on disk at address 'path_start' + function postfix
-    Returns (Dictionary {float: list[StandardDataset]}, Dictionary {float: list[indexes]})
-    -------
-    Dictionary with bias level (float) as keys and list with a StandardDataset partition for each fold as objects,
-    Dictionary with bias level (float) as keys and list of the folds indexes (list of strings) as objects
+
+    Returns : (Dictionary {float: list[StandardDataset]}, Dictionary {float: list[indexes]})
+        Dictionary with bias level (float) as keys and list with a StandardDataset partition for each fold as objects,
+        Dictionary with bias level (float) as keys and list of the folds indexes (list of strings) as objects
     """
     #Split first dataset in dict and save indexes of each partitions
     o = list(dataset_dict.keys())[0] #first key
@@ -75,9 +85,9 @@ def random_splits(dataset_dict, k: int, path_start: str= None) :
         Dictionary of the different biased versions of the same dataset,
     path_start: String
         if not None, save datasets dict on disk at address 'path_start' + function postfix
-    Returns (Dictionary {float: list[StandardDataset]}, Dictionary {float: list[indexes]})
-    -------
-    Dictionary with bias level (float) as keys and list with a StandardDataset partition for each fold as objects
+    
+    Returns : (Dictionary {float: list[StandardDataset]}, Dictionary {float: list[indexes]})
+        Dictionary with bias level (float) as keys and list with a StandardDataset partition for each fold as objects
     """
     #folds = {} #keys are fold numbers (int), objects are list of the folds indexes (list of strings)
     n_bias_splits = {}
@@ -94,6 +104,7 @@ def random_splits(dataset_dict, k: int, path_start: str= None) :
 
 def get_subset(dataset_orig: StandardDataset, dataset_smaller: StandardDataset) :
     """ Select the subset of instances of dataset_orig that are also in dataset_smaller
+
     Returns : StandardDataset
         Copy of dataset_orig containing only the instances that are also present in dataset_smaller
     """
@@ -123,6 +134,9 @@ def merge_train(split_list: list[StandardDataset], fold:int, valid:bool, path_st
         whether a validation set should be created (True) or not (False). If True, the validation set will correspond to split_list[wrap(fold+1)]
     path_start: String
         if not None, save dataset dict on disk at address 'path_start' + function postfix
+    
+    Returns : StandardDataset
+        Dataset formed from merging the folds not used for test nor validation
     """
     k = len(split_list)
     df_list = [None] * k
@@ -150,11 +164,10 @@ def merge_train(split_list: list[StandardDataset], fold:int, valid:bool, path_st
     #print(merged_dataset.convert_to_dataframe())
     return merged_dataset
 
+""" Legacy method
 def nk_merge_train_orig(split_dict,path_start:str=None) :
-    """
-    Return : Dictionary {float : {int : {'train' : StandardDataset, 'test': StandardDataset}}}
-    train_test_dict[bias][fold]: {'train': train set, 'test': test set}
-    """
+    #Return : Dictionary {float : {int : {'train' : StandardDataset, 'test': StandardDataset}}}
+    #train_test_dict[bias][fold]: {'train': train set, 'test': test set}
     keys = split_dict.keys()
     train_test_dict = {}
     k = len(split_dict[list(keys)[0]])
@@ -169,12 +182,13 @@ def nk_merge_train_orig(split_dict,path_start:str=None) :
             pickle.dump(train_test_dict,file)
 
     return train_test_dict
+"""
 
 def nk_merge_train(split_dict, valid:bool, path_start:str=None) :
     """ Creates train set, test set (and validation set if valid=True) for each bias level from list of splits
     
     Return : Dictionary {float : {int : {'train' : StandardDataset, 'test': StandardDataset}}}
-    train_test_dict[bias][fold]: {'train': train set, 'test': test set}
+        train_test_dict[bias][fold]: {'train': train set, 'test': test set}
     """
     keys = split_dict.keys()
     train_test_dict = {}
@@ -219,8 +233,6 @@ def remove_test(data_orig: StandardDataset, data_test: StandardDataset) :
 
 def single_classifier(algo: str, dataset_train: StandardDataset, blinding: bool, path_start: str = None) :
     """ Create a classifier trained with the instances of dataset_orig that are not in dataset_test
-    Parameters
-    ----------
     algo : String ('RF'|'tree'|'neural')
         Type of classifier that should be used
     dataset_train : StandardDataset
@@ -231,9 +243,7 @@ def single_classifier(algo: str, dataset_train: StandardDataset, blinding: bool,
     path_start: String
         if not None, save classifier on disk at address 'path_start' + function postfix
     
-    Returns
-    -------
-    Classifier
+    Returns : Classifier
         Model trained with dataset_train
     """
     if blinding :
@@ -265,8 +275,6 @@ def single_classifier(algo: str, dataset_train: StandardDataset, blinding: bool,
 
 def classifier_kfold(classifier: str, fold_dict, blinding: bool, path_start: str = None) :
     """ Create a classifier for each fold in split_list, trained with the instances of dataset_orig that are not in the corresponding dataset in split_list
-    Parameters
-    ----------
     algo : String ('RF'|'tree'|'neural')
         Type of classifier that will be trained with each fold in split_list
     fold_dict : Dictionary {int: {'train': StandardDataset, 'test: StandardDataset}}
@@ -274,9 +282,7 @@ def classifier_kfold(classifier: str, fold_dict, blinding: bool, path_start: str
     path_start: String
         if not None, save classifiers dict on disk at address 'path_start' + function postfix
     
-    Returns
-    -------
-    Dictionary
+    Returns : Dictionary
         Dictionary containing the classifier for each fold
         k_models[i] holds the model trained with the dataset held at fold_dict[i]['train']
     """
@@ -297,9 +303,7 @@ def classifier_kfold(classifier: str, fold_dict, blinding: bool, path_start: str
     return k_models
     
 def classifier_nbias(classifier: str, nk_dataset_dict, blinding: bool, path_start: str = None) :
-    """ 
-    Parameters
-    ----------
+    """ Create k classifers, one for each combination of train and test set present in 'nk_dataset_dict'
     classifier : String ('RF'|'tree'|'neural')
         Type of classifier that will be trained with each bias level and each fold in dataset_dict
     nk_dataset_dict : Dictionary {float : {int : {'train' : StandardDataset, ('valid': StandardDataset,) 'test': StandardDataset}}}
@@ -308,9 +312,8 @@ def classifier_nbias(classifier: str, nk_dataset_dict, blinding: bool, path_star
     blinding : Boolean
         Wether the sensitive attribute is used in training (False) or not (True)path_start: String
         if not None, save classifiers dict on disk at address 'path_start' + function postfix
-    Returns
-    -------
-    Dictionary of dictionary
+    
+    Returns : Dictionary of dictionary
         Dictionary containing all classifiers for each bias and fold present in dataset_dict
         all_models[bias][fold] holds the model trained with the partitions complementary to dataset_dict[bias][fold], which contains the instances provisioned for the test set
     """
@@ -338,9 +341,8 @@ def single_prediction(classifier, test_dataset: StandardDataset, blinding: bool)
         Wether the sensitive attribute has been used to train 'classifier' (True) or not (False) [needed to have same features in test and train]
     pred_type : str
         The type of prediction : 'labels' for binary labels and 'scores' for classification probabilities
-    Returns
-    -------
-    StandardDataset
+    
+    Returns : StandardDataset
         A dataset with the features in 'test_dataset' and the labels predicted by 'classifier'
     """
     if blinding :
@@ -370,6 +372,8 @@ def prediction_kfold(classifier_dict, split_list: list[StandardDataset], blindin
     path_start: String
         if not None, save predictions dict on disk at address 'path_start' + function postfix
     
+    Returns : list[StandardDataset]
+        List of datasets holding the predictions
     """
     k_pred = {} #key: fold number (= test set number), object: prediction for test set
     k = len(split_list)
@@ -401,9 +405,8 @@ def prediction_nbias(classifier_dict, nk_train_splits, set:str, blinding: bool, 
         (Doesn't make a difference for label bias)
     path_start: String
         if not None, save predictions dict on disk at address 'path_start' + function postfix
-    Returns
-    -------
-    Dictionary {'pred': {float: {int: StandardDataset}, 'orig': {float: {int: StandardDataset}}
+    
+    Returns : Dictionary {'pred': {float: {int: StandardDataset}, 'orig': {float: {int: StandardDataset}}
         Nested dictionaries where n_pred['pred'][b][f] holds the prediction given by model trained on fold nbr 'f' of dataset with bias level 'b' and n_pred['orig'][b][f] holds the input data given to make the predictions
     """
     n_pred = {}
@@ -438,9 +441,8 @@ def pred_to_dataset(dataset_orig : StandardDataset, pred_labels : np.ndarray, pr
         1-d array containing predictions, the predictions order must correspond to that of the instances in dataset_orig
     pred_type : str
         The type of prediction : 'labels' for binary labels and 'scores' for classification probabilities
-    Returns
-    -------
-    StandardDataset
+    
+    Returns : StandardDataset
         Dataset containing the instances and info in dataset_orig with the labels in predictions
     """
     dataset_pred = dataset_orig.copy()

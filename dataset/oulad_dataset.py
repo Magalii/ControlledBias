@@ -1,8 +1,14 @@
+""" 
+    Class of OULAD datasets
+    Allows to create OULADsocial and OULADstem
+"""
+
 import pandas as pd
 import numpy as np
 
 import sys 
 sys.path.append('../')
+sys.path.append('parent_aif360')
 from aif360.datasets import StandardDataset
 
 path_to_data = 'dataset/'

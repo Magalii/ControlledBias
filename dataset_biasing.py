@@ -1,3 +1,13 @@
+"""
+    Code to introduce bias in datasets
+    For label bias : mislabeling_nbias() + measurement_biasing()
+    For incremental selection bias : undersampling_incremental_nbias() + undersampling_biasing(removal_distr)
+        - For random selection : removal_distr = 'random'
+        - For self-selection : removal_distr = 'selectLow'
+        - For malicious selection : removal_distr = 'double_disc'
+        - For mere size reduction : removal_distr = 'double_random'
+"""
+
 import pandas as pd
 import numpy as np
 import scipy.stats as st
@@ -5,6 +15,7 @@ import pickle
 
 import sys 
 sys.path.append('..')
+sys.path.append('parent_aif360')
 
 from aif360.datasets import StandardDataset
 
@@ -123,14 +134,24 @@ def flip_label_bias(df: pd.DataFrame, attr: str, sens_attr: str, b_m: float, dou
         
     return df_biased
 
-
-
-def mislabeling_nbias(dataset_orig: StandardDataset, b_m: list, noise:float = 0.1, double_disc=False, path_start: str = None) :
+def mislabeling_nbias(dataset_orig: StandardDataset, b_m: list[float], noise:float = 0.1, double_disc=False, path_start: str = None) :
     """
-        create Datasets objects with measurement bias
-        One dataset is created for each biasing value in the list b_m
-        Returns : Dictionary {float: StandardDataset}
-        data_biased_dict[b_m] = StandardDataset with bias level b_m
+        Create Datasets objects with measurement bias. One dataset is created for each biasing value in the list b_m
+        dataset_orig : StandardDataset
+            Dataset to which the bias need to be added
+        b_m : float
+            Coefficient of the measurement bias added, 0 means no bias, 1 means penalty on minority is half of max value for the biased attribute
+        noise : float, optional
+            Scale of the standart deviation, must be positive, should be between 0 (no noise) and 1 (standard deviation is half of the difference between lowest and highest value attr), will be scaled to the values attribute attr
+        double_disc : Boolean, optional
+            Whether the label bias is applied only on unprivileged group (False) or on both unprivileged as a penalty and privileged group as a bonus (True)
+        path_start : String
+            Path at which the dictionary will be saved, if None dictionary is not saved
+        Returns
+        -------
+        Dictionary {float: StandardDataset}
+            Dictionary containing the biased datasets
+            data_biased_dict[b_m] = StandardDataset with bias level b_m
     """
     label_multi = 'label_multi'
     df_multiclass = dataset_orig.to_df_multiclass(label_multi)
@@ -179,11 +200,13 @@ def undersampling_biasing(df: pd.DataFrame, sens_attr: str, removal_distr:str,  
     removal_distr : string, optional
         if 'random': the unprivileged instances are removed randomly
         if 'random_pos': unprivileged instances are randomly removed amongst those with positive label
+        if 'double_random': randomly undersample a number p_u*nbr_unpriv of instances from the whole dataset
         if 'normal': unprivileged instances removed with probabilities following the pdf of a normal distribution on unprivileged instances sorted by 'cond_attr' values (index with mean values of 'cond_attr' are more likely to be removed)
         if 'lower_weight': unprivileged instances removed with probabilities weighted according to 'cond_attr' values, lower values more likely to be removed. weight_i = (val_max-val_i)²/SumOfAll((val_max-val)²)
         if 'higher_weight': unprivileged instances removed with probabilities weighted according to 'cond_attr' values, higher values more likely to be removed. weight_i = val_i²/SumOfAll(val²)
         if 'double_disc': remove a proportion 'p_u' of unprivileged instances with positive label and the same proportion 'p_u' of privileged instances with negative label
         if 'lowest_val' : the unpriviledged individuals with lowest values are removed
+        if 'priv_neg' : randomly undersample a proportion p_u of unprivileged individuals with a negative outcome
     fav_one : Boolean, optional
         Wether the favorable value for the sensitive attribute is 1 (True) or 0 (False)
         
@@ -314,6 +337,14 @@ def undersampling_biasing(df: pd.DataFrame, sens_attr: str, removal_distr:str,  
             else : #drop all unpriv_pos
                 drop_priv = id_priv_neg
             drop_id = [*drop_unpriv, *drop_priv]
+        elif removal_distr == 'double_random': #randomly undersample a number p_u*nbr_unpriv of instances from the whole dataset
+            print("undersampling : random whole dataset")
+            df_unpriv = df.loc[df[sens_attr] == unpriv,:]
+            nbr_unpriv = len(df_unpriv.index.to_list())
+            if p_u is not None :
+                    nbr_removal = int(p_u*nbr_unpriv)
+            id_removal = df.index.to_list()
+            drop_id = my_random_choice(id_removal,nbr_removal)
         else :
             print("WARNING Not a valid type of selection bias")
         
@@ -389,7 +420,7 @@ def undersampling_incremental_nbias(dataset_orig: StandardDataset, removal_distr
             nbr_unpriv_pos = len(df_unpriv.loc[(df[label] == 1)].index.to_list())
             nbr_priv_neg = len(df.loc[(df[sens_attr] == 1) & (df[label] == 0)].index.to_list())
             u_group_size = nbr_unpriv_pos+nbr_priv_neg        
-        else : # undersampled group is the underprivileged one
+        else : # undersampled group is the size of the underprivileged groupe
             df = df_orig
             u_group_size = len(df_unpriv.index.to_list())
     inc_removal = int(u_group_size*incr_bias) #nbr of individuals to remove at each biasing incrementation
@@ -398,8 +429,8 @@ def undersampling_incremental_nbias(dataset_orig: StandardDataset, removal_distr
     data_biased_dict = {}
     data_biased_dict[0] = dataset_orig #Bias level 0 -> Unbiased dataset
     for b in bias_levels[1:] :
-        print("Working on bias level : "+str(b))
-        if b == 1 : inc_removal = u_group_size #ensures that the whole group is removed, necessary in case inc_removal is rounded down
+        #print("Working on bias level : "+str(b))
+        if b == 1 : inc_removal = u_group_size-int(inc_removal*(len(bias_levels)-2)) #ensures that the whole group is removed, necessary in case inc_removal is rounded down
         df_biased = undersampling_biasing(df_biased, sens_attr, removal_distr=removal_distr, nbr_removal=inc_removal, cond_attr=label_multi, label=label)
         dataset_biased = StandardDataset(df = df_biased,
                                         label_name=label,
