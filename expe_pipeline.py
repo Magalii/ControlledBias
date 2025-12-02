@@ -56,15 +56,15 @@ def pipeline(datasets:list[str], biases:list[str], bias_levels:list[float], prep
     """
     start = time.perf_counter()
 
-    if save_intermediate not in ['all','intermediate','minimal','dataset_only','no'] :
-        print("WARNING save must a value in ['all','intermediate','minimal','dataset_only','no']")
+    if save_intermediate not in ['all','intermediate','minimal','no'] :
+        print("WARNING save must a value in ['all','intermediate','minimal','no']")
 
     computed = True #Set this value to False here AND later in the code to force recomputation, even if data has already been saved on disk.
 
     for ds in datasets :
         step = ds
         if verbose : print("\n#### "+step)
-        if save_intermediate in ['all','intermediate','minimal','dataset_only'] :
+        if save_intermediate in ['all','intermediate','minimal'] :
             path_dataset = path_start+ds+"_dataset"
         else : path_dataset = None
         if computed and path_dataset is not None :
@@ -100,7 +100,7 @@ def pipeline(datasets:list[str], biases:list[str], bias_levels:list[float], prep
             if verbose : print("- "+step)
             label_bias = ['label','labelDouble'] #List of bias falling under the "label bias" umbrella
             select_bias = ['selectLow','selectDoubleProp','selectRandom','selectPrivNoUnpriv','selectRandomWhole'] #List of bias falling under the "selection bias" umbrella   
-            if save_intermediate in ['all','intermediate','minimal'] :
+            if save_intermediate in ['all','intermediate'] :
                 path_bias = path_start+ds+'_'+bias
             else :
                 path_bias = None
@@ -204,7 +204,7 @@ def pipeline(datasets:list[str], biases:list[str], bias_levels:list[float], prep
                         step = step + " " + visibility
                         path_model = path_start+ds+'_'+bias+'_'+preproc+'_'+model+visibility
                         
-                        if save_intermediate in ['all'] :
+                        if save_intermediate in ['all','intermediate','minimal'] :
                             path_trained = path_model
                         else :
                             path_trained = None

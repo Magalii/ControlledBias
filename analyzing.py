@@ -217,7 +217,7 @@ def get_all_metrics(nk_pred, nk_train_splits, clas_type:str=None, dataset_name:s
         except (Exception, pickle.UnpicklingError) as err :
             recompute = True
     if recompute :
-        if clas_type in ['RF'] : #Generate textual representation of trees before calling sens_attr_usage
+        if clas_type in ['tree','RF'] : #Generate textual representation of trees before calling sens_attr_usage
             txt_nk_trees(clas_type, dataset_name, bias_name, nk_pred[0][0].feature_names,to1=to1)
         all_info = {}
         for b in nk_pred.keys() :
@@ -243,12 +243,12 @@ def get_all_metrics(nk_pred, nk_train_splits, clas_type:str=None, dataset_name:s
                     print(test_fold.instance_names)
                     print("Size: "+str(len(test_fold.instance_names)))
                     exit()
-                if clas_type in ['RF'] :
+                if clas_type in ['tree','RF'] :
                     if nk_pred[b][k] is not None :
                         all_info[b][k]['sens_attr_usage'] = sens_attr_usage(clas_type, dataset_name, nk_pred[b][k].protected_attribute_names[0], bias_name, b, k)
                     else :
                         all_info[b][k]['sens_attr_usage'] = np.nan
-                elif clas_type == 'tree' or clas_type == 'neural':
+                elif clas_type == 'neural': #clas_type == 'tree' or
                     all_info[b][k]['sens_attr_usage'] = np.nan
                 elif clas_type is not None :
                     print("WARNING Not a valid classifier type. Must be 'tree', 'RF' or 'neural'")
@@ -376,8 +376,12 @@ def txt_nk_trees(clas_type:str, dataset:str, bias_type:str, feature_names:list[s
     if to1 : pref = '0to1_'
     else : pref = ''
     path_trees = path_retrieval+pref+dataset+'_'+bias_type+'__'+clas_type+"Aware_all.pkl"
-    with open(path_trees,"rb") as file:
-        nk_classifier = pickle.load(file)
+    try :
+        with open(path_trees,"rb") as file:
+            nk_classifier = pickle.load(file)
+    except FileNotFoundError :
+        print("WARNING The sensitive attribute usage could not be computed. Saving models on disk is necessary for this.")
+        return
     for n in nk_classifier.keys() :
         if n == 0 : nn = "b0.0" # Establish consistent naming style for all bias levels #TODO remove this if experiments are rerun with bias=0.0
         else : nn = 'b'+str(n)
@@ -387,13 +391,13 @@ def txt_nk_trees(clas_type:str, dataset:str, bias_type:str, feature_names:list[s
             file_name = "tree_"+dataset+'_'+bias_type+'_'+str(nn)+'k'+str(k)
             if clas_type == 'tree':
                 text = export_text(clas, feature_names=feature_names,class_names=clas_names )
-                with open("trees/"+file_name+".txt", "w") as fout:
+                with open("data/trees/"+file_name+".txt", "w") as fout:
                     fout.write(text)
             elif clas_type == 'RF':
                 for i in range(len(clas.estimators_)) :
                     est = clas.estimators_[i] #one tree composing the RF
                     text = export_text(est, feature_names=feature_names, class_names=clas_names)
-                    with open("RFs/"+file_name+'i'+str(i)+".txt", "w") as fout:
+                    with open("data/RFs/"+file_name+'i'+str(i)+".txt", "w") as fout:
                         fout.write(text)
             else :
                 print("WARNING Wrong tree-based classifier name. Only 'tree' and 'RF' are supported")
@@ -512,11 +516,11 @@ def sens_attr_usage(clas_type:str, dataset_name:str, sens_attr:str, bias_name:st
     sens_attr = "'"+sens_attr+" >'"
     if bias_level == 0 : b = "0.0"
     else : b = str(bias_level)
-    file_names = clas_type+"s/tree_"+dataset_name+"_"+bias_name+"_b"+b+"k"+str(fold_num)+"*.txt"
+    file_names = clas_type+"s/tree_"+dataset_name+"_"+bias_name+"_b"+b+"k"+str(fold_num)+"*.txt" #If there is no suck file, process doesn't fail
     process = subprocess.Popen(["grep -c "+sens_attr+" "+file_names+" | grep -v ':0' | grep -c "+dataset_name],shell=True,stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     stdout,stderr = process.communicate()
     result = int((stdout))/num_tree # Save proportion of individual trees that use the sensitive attribute (100 trees per RF)
-
+    
     # grep - c string @Count number of occurances per file
     # cat *_student_* | grep -c "sex >" @ Count total number of occurances (Combines all files, then give to grep)
     # grep -c "sex >" *_student_* | grep -v ":0" @ Filter out outputs lines with zero occurences of 'sex'
@@ -579,11 +583,6 @@ def compute_all(data_list, bias_list, preproc_list, postproc_list, model_list, b
             #Retrieve original (biased) data for test set
             path = path_start+pref+ds+'_'+bias+valid
             #Result of common split
-            #with open(path+"_nbias_splits_datasets.pkl","rb") as file:
-            #    nk_folds_dict = pickle.load(file)
-            #Dictionary with train-test split for each bias level
-            #with open(path+"_train-test-nk.pkl","rb") as file:
-            #    nk_train_splits = pickle.load(file)
             for preproc in preproc_list :
                 for model in model_list :
                     for blind in blinding_list :
@@ -639,7 +638,5 @@ def compute_all(data_list, bias_list, preproc_list, postproc_list, model_list, b
                                 del n_pred_transf_biasedValidFairTest, n_pred_transf_biasedValidBiasedTest#, n_pred_transf_FairValidFairTest
                                 gc.collect()
                         gc.collect()
-            #del nk_train_splits
             gc.collect()
-
 
