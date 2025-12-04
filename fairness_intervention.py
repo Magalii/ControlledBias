@@ -359,7 +359,7 @@ def n_postproc_orig(postproc:str, n_dataset_true, n_dataset_pred, biased_truth:b
 
     return n_transf
 
-def n_postproc(postproc:str, n_valid_pred, n_test_pred, biased_valid:bool, path_start:str = None):
+def n_postproc(postproc:str, n_valid_pred, n_test_pred, biased_valid:bool, path_start:str = None, queue=None):
     """ Apply the given post-processing method to for every bias level and every fold found in n_test_pred
     postproc: str
         The chosen postprossing, must be one of the following :
@@ -396,14 +396,13 @@ def n_postproc(postproc:str, n_valid_pred, n_test_pred, biased_valid:bool, path_
                     n_transf[b][f] = apply_postproc(postproc, nk_train_split[b][f], n_valid_pred['pred'][b][f], n_test_pred['pred'][b][f])
                 else :
                     n_transf[b][f] = apply_postproc(postproc, nk_train_split[0][f], n_valid_pred['pred'][b][f], n_test_pred['pred'][b][f])
-            except ValueError as err:
-                print("ERROR " + postproc + " not applied for bias level "+str(b)+" and fold "+str(f))
-                print("ValueError: {}".format(err))
+            except (ValueError, IndexError) as err:
+                #print("ERROR " + postproc + " not applied for bias level "+str(b)+" and fold "+str(f))
+                #print("ValueError: {}".format(err))
                 n_transf[b][f] = None
-            except IndexError as err:
-                print("ERROR " + postproc + " not applied for bias level "+str(b)+" and fold "+str(f))
-                print("IndexError: {}".format(err))
-                n_transf[b][f] = None
+            except Warning as warn :
+                #print("Warning: {}".format(warn))
+                pass
             #print("bias "+str(b)+"fold "+str(f))
             #print(n_transf[b][f])
         gc.collect()
@@ -415,8 +414,9 @@ def n_postproc(postproc:str, n_valid_pred, n_test_pred, biased_valid:bool, path_
         path = path_start + '_n.pkl'
         with open(path,'wb') as file:
             pickle.dump(transf_dict,file)
+    if queue is not None :
+        queue.put(transf_dict)
 
-    #print(transf_dict['pred'])
     return transf_dict
 
 def eq_odds_postprocess(dataset_orig, valid_pred: StandardDataset, test_pred: StandardDataset, fav_one=True) :

@@ -525,9 +525,10 @@ def plot_all_tradeoff(retrieval_path:str, bias_list:list[str], metric_list:list[
     bias_levels = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
     for bias_type in bias_list :
         for ds in dataset_list :
-            for metric in metric_list :
-                plot_tradeoff(retrieval_path,metric,[ds],model_list,bias_type,bias_levels,biased_test=False,plot_style=plot_style,plot_path=plot_path,display = False)
-                plot_tradeoff(retrieval_path,metric,[ds],model_list,bias_type,bias_levels,biased_test=True,plot_style=plot_style,plot_path=plot_path,display = False)
+            for model in model_list :
+                for metric in metric_list :
+                    plot_tradeoff(retrieval_path,metric,[ds],[model],bias_type,bias_levels,biased_test=False,plot_style=plot_style,plot_path=plot_path,display = False)
+                    plot_tradeoff(retrieval_path,metric,[ds],[model],bias_type,bias_levels,biased_test=True,plot_style=plot_style,plot_path=plot_path,display = False)
 
 
 def plot_by_metric(retrieval_path:str, dataset_list=['student','OULADstem', 'OULADsocial'], metric_list=['acc','StatParity','EqqOddsDiff','GenEntropyIndex'], bias_list=['label','selectDoubleProp'],preproc_list=['', 'reweighting','massaging'],ylim:list[float]=None, xlim:list[float]=None, all_bias:list[float]=[0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9], plot_style: str = 'SIMPLE_PLOT', title: str = '', path_start:str = None, display=False) :

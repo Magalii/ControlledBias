@@ -14,15 +14,15 @@ This branch contains the code for submitted article "No evaluation without fair 
 [cc-by-nc-sa-shield]: https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey.svg
 
 
-
-
 ## Run experiment code
 
-To reproduce the experiments, run the file 'run_expe.py' with Python.
+To reproduce the experiments, run the file 'run_expe.py' with Python. Experiment settings can be changed in that file.
 
-The OULAD datasets needs to be downloaded beforehand and the different CVS files placed in the directory 'dataset/OULAD'.
+The OULAD dataset needs to be downloaded beforehand and the different CVS files placed in the directory 'dataset/OULAD'. They can downloaded from the [UCI ML repository][UCIrepo].
 
-Requirements :
+[UCIrepo]: https://archive.ics.uci.edu/dataset/349/open+university+learning+analytics+dataset
+
+### Technical requirements :
 - Several Python module, including :
     - aif360
     - sklearn
@@ -30,7 +30,7 @@ Requirements :
     - pandas
     - numpy
 - A minimum of 16GB RAM
-- Around 74Gb of disk space to store the results
+- Around 7,5Gb of disk space to store some intermediate results. The amount of intermediate results saved can be adjusted in run_expe.py
 
 ## Aditionnal results
 
@@ -41,6 +41,7 @@ The different bias types are indicated in all file names as follow :
 - Random selection : 'selectRandom'
 - Self-selection : 'selectLow'
 - Malicious selection : 'selectDouble'
-- Malicious selection with unprivileged group excluded from the train set : ''
+- Malicious selection with unprivileged group excluded from the train set : 'selectPrivNoUnpriv'
+- Uniform undersampling of the whole dataset : 'selectRandomWhole'
 
 

@@ -16,8 +16,9 @@ from dataset.oulad_dataset import OULADDataset
 import dataset_biasing as db
 import model_training as mt
 import fairness_intervention as fair
+import analyzing as a
 
-def pipeline(datasets:list[str], biases:list[str], bias_levels:list[float], preproc_methods:list[str], postproc_methods:list[str], classifiers:list[str], blind_model:list[bool], path_start:str, save_intermediate:str, verbose:bool):
+def pipeline(datasets:list[str], biases:list[str], bias_levels:list[float], preproc_methods:list[str], postproc_methods:list[str], classifiers:list[str], blind_model:list[bool], path_start:str, pref:str, save_intermediate:str, verbose:bool):
     """
         Experiment pipeline with dataset biasing, model training with pre-processing, post-processing or no mitigation, and predictions
         Results, potentially including intermediate results, are saved on disk.
@@ -45,13 +46,12 @@ def pipeline(datasets:list[str], biases:list[str], bias_levels:list[float], prep
             Path at wich (intermediate) results are saved
         save_intermediate : String
             Controle how much intermediate results are saved on disk
-            'no' to not save any intermediate result (NOT RECOMMENDED, as it will lead to the same results recomputed many times)
-            'dataset_only' to only save the original datasets (without their bias mitigated versions)
-            'minimal' to save the original and biased version of the datasets
-            'intermediate' to save all datasets verisons and their splits. Will guarantee that the same splits are used accross all experiments
+            'no' to not save any intermediate result (NOT RECOMMENDED, as it will lead to the same results recomputed many times + doesn't allow to compute the sensitive attribute usage)
+            'minimal' to save the original and biased version of the datasets + unmitigated trained models
+            'intermediate' (RECOMMENDED) to save all datasets verisons and their splits + unmitigated trained models. Will guarantee that the same splits are used accross all experiments and that the sensitive attribute usage can be computed
             'all' to save all intermadiate results (WARNING may require a lot of disk space)
             Results that are present on disk but are not included in the level selected will be recomputed
-
+            Results of evaluation metrics on only recomputed if there are not already present on disk
     No return value
     """
     start = time.perf_counter()
@@ -63,13 +63,13 @@ def pipeline(datasets:list[str], biases:list[str], bias_levels:list[float], prep
 
     for ds in datasets :
         step = ds
-        if verbose : print("\n#### "+step)
+        if verbose : print("##### "+step)
         if save_intermediate in ['all','intermediate','minimal'] :
-            path_dataset = path_start+ds+"_dataset"
+            path_dataset = path_start+pref+ds+"_dataset"
         else : path_dataset = None
         if computed and path_dataset is not None :
             try :
-                with open(path_start+ds+"_dataset",'rb') as file:
+                with open(path_start+pref+ds+"_dataset",'rb') as file:
                     dataset_orig = pickle.load(file)
             except (Exception, pickle.UnpicklingError) as err:
                 computed = False
@@ -92,7 +92,7 @@ def pipeline(datasets:list[str], biases:list[str], bias_levels:list[float], prep
             else :
                 print("WARNING '"+str(ds)+"' is not a valid dataset name")
             if path_dataset is not None :
-                with open(path_start+ds+"_dataset",'wb') as file:
+                with open(path_start+pref+ds+"_dataset",'wb') as file:
                     pickle.dump(dataset_orig,file)
        
         for bias in biases :
@@ -101,7 +101,7 @@ def pipeline(datasets:list[str], biases:list[str], bias_levels:list[float], prep
             label_bias = ['label','labelDouble'] #List of bias falling under the "label bias" umbrella
             select_bias = ['selectLow','selectDoubleProp','selectRandom','selectPrivNoUnpriv','selectRandomWhole'] #List of bias falling under the "selection bias" umbrella   
             if save_intermediate in ['all','intermediate'] :
-                path_bias = path_start+ds+'_'+bias
+                path_bias = path_start+pref+ds+'_'+bias
             else :
                 path_bias = None
             if computed and path_bias is not None :
@@ -172,9 +172,9 @@ def pipeline(datasets:list[str], biases:list[str], bias_levels:list[float], prep
             #apply preprocessing if needed
             for preproc in preproc_methods :
                 step = step + " " + preproc
-                if verbose : print("- "+step)
+                if verbose : print("-- "+step)
                 if save_intermediate in ['all'] :
-                    path_preproc = path = path_start+ds+'_'+bias+'_'+preproc
+                    path_preproc = path = path_start+pref+ds+'_'+bias+'_'+preproc
                 else :
                     path_preproc = None
                 if preproc == '' :
@@ -196,13 +196,13 @@ def pipeline(datasets:list[str], biases:list[str], bias_levels:list[float], prep
                 # Train models
                 for model in classifiers :
                     step = step + " " + model
-                    if verbose : print("- "+step)
+                    if verbose : print("--- "+step)
                     for blind in blind_model :
                         #Train models with (preprocessed) data
                         if blind : visibility = 'Blinded'
                         else : visibility = 'Aware'
                         step = step + " " + visibility
-                        path_model = path_start+ds+'_'+bias+'_'+preproc+'_'+model+visibility
+                        path_model = path_start+pref+ds+'_'+bias+'_'+preproc+'_'+model+visibility
                         
                         if save_intermediate in ['all','intermediate','minimal'] :
                             path_trained = path_model
@@ -222,8 +222,11 @@ def pipeline(datasets:list[str], biases:list[str], bias_levels:list[float], prep
                         if len(postproc_methods) == 0 : #Compute predicted labels directly 
                             #Create predictions from data (both original and biased test set, no preprocessing on test set)
                             #End result, must be saved
-                            path_pred = path_model
-                            path_pred_biased = path_model +"_biasedTest"
+                            if save_intermediate in ['all'] :
+                                path_pred = path_model
+                                path_pred_biased = path_model +"_biasedTest"
+                            else :
+                                path_pred,path_pred_biased = None, None
                             if computed and path_pred is not None :
                                 try :
                                     with open(path_pred+"_pred_all.pkl","rb") as file:
@@ -239,6 +242,15 @@ def pipeline(datasets:list[str], biases:list[str], bias_levels:list[float], prep
                                 #n_pred['pred'] = Dictionary with prediction where pred[b][f] = StandardDataset
                                 #n_pred['orig] = nk_train_splits
                                 gc.collect()
+
+                            #Compute evaluation metrics
+                            if preproc == '': classifier = model 
+                            else : classifier = None #sens. attr. usage will not be computed
+                            path_results = path_start+"Results/"+pref+ds+'_'+bias+'_'+preproc+'_'+model+visibility+'_'
+                            all_metrics = a.get_all_metrics(n_pred['pred'], n_pred['orig'],classifier,ds,bias,path_start+pref,path_results,biased_test=False,recompute=False)
+                            a.metrics_for_plot(all_metrics,path_start=path_results)
+                            all_metrics_biased = a.get_all_metrics(n_pred_bias['pred'], n_pred_bias['orig'],classifier,ds,bias,path_start+pref,path_results,biased_test=True,recompute=False)
+                            a.metrics_for_plot(all_metrics_biased,path_start=path_results+"_Biased")
 
                         else : # Post-process models before making predictions
                             
@@ -297,12 +309,15 @@ def pipeline(datasets:list[str], biases:list[str], bias_levels:list[float], prep
 
                             #Apply post-processing if needed
                             for postproc in postproc_methods :
-                                step = step + " " + model + postproc
-                                if verbose : print("### "+step+" ###")
+                                step = step + " " + model + " " + postproc
+                                if verbose : print("---- "+step)
                                 #End result, must be saved
-                                path_postproc = path_start+ds+'_'+bias+'_'+preproc+'_'+model+visibility+'_'+postproc
-                                path_biasedValidFairTest = path_postproc+"-BiasedValidFairTest"
-                                path_biasedValidBiasedTest = path_postproc+"-BiasedValidBiasedTest"
+                                if save_intermediate in ['all'] :
+                                    path_postproc = path_start+pref+ds+'_'+bias+'_'+preproc+'_'+model+visibility+'_'+postproc
+                                    path_biasedValidFairTest = path_postproc+"-BiasedValidFairTest"
+                                    path_biasedValidBiasedTest = path_postproc+"-BiasedValidBiasedTest"
+                                else :
+                                    path_postproc, path_biasedValidFairTest, path_biasedValidBiasedTest = None, None, None
                                 #path_fairValidFairTest = path_postproc+"-FairValidFairTest" #Not used in expe
                                 #path_biasedPred = path_postproc +"-FairValidBiasedTest"
                                 #n_valid_fair_scores, n_valid_biased_scores, n_test_fair_scores, n_test_biased_scores
@@ -317,10 +332,11 @@ def pipeline(datasets:list[str], biases:list[str], bias_levels:list[float], prep
                                     if verbose : print("(re)compute "+step+ " Fair evaluation")
                                     #postproc:str, nk_train_split, n_valid_pred, n_test_pred, biased_valid:bool, path_start:str = None):
                                     #fair.n_postproc(postproc, nk_train_splits, n_valid_biased_scores, n_test_fair_scores, True, path_biasedValidFairTest)
-                                    proc1 = mp.Process(target = fair.n_postproc, args = (postproc, n_valid_biased_scores, n_test_fair_scores, True, path_biasedValidFairTest))
+                                    q = mp.Queue()
+                                    proc1 = mp.Process(target = fair.n_postproc, args = (postproc, n_valid_biased_scores, n_test_fair_scores, True, path_biasedValidFairTest,q))
                                     proc1.start()
+                                    n_pred_transf_biasedValidFairTest = q.get()
                                     proc1.join()
-                                #print("Biased Validation + biased test set")
                                 
                                 if computed and path_biasedValidBiasedTest is not None :
                                     try :
@@ -331,8 +347,10 @@ def pipeline(datasets:list[str], biases:list[str], bias_levels:list[float], prep
                                 if not computed or path_biasedValidBiasedTest is None :
                                     if verbose : print("(re)compute "+step+ " Biased evaluation")
                                     #n_predBias_transf = fair.n_postproc(postproc, nk_train_splits, n_pred_bias, biased_truth = True, path_start=path_biasedPred) #Traditional configuration (biased evaluation of realistic (biased) postprocessing)
-                                    proc3 = mp.Process(target = fair.n_postproc, args = (postproc, n_valid_biased_scores,n_test_biased_scores,True,path_biasedValidBiasedTest))
+                                    q = mp.Queue()
+                                    proc3 = mp.Process(target = fair.n_postproc, args = (postproc, n_valid_biased_scores,n_test_biased_scores,True,path_biasedValidBiasedTest,q))
                                     proc3.start()
+                                    n_pred_transf_biasedValidBiasedTest = q.get()
                                     proc3.join()
                                 """ #Not used in experiment
                                 #if verbose : print("Fair validation set + fair test set")
@@ -349,6 +367,18 @@ def pipeline(datasets:list[str], biases:list[str], bias_levels:list[float], prep
                                     proc2.start()
                                     proc2.join()
                                 """
+                                #Compute evaluation metrics
+                                path_res = path_start+"Results/"+pref+ds+'_'+bias+'_'+preproc+'_'+model+visibility+'_'+postproc
+                                path_res_biasedValidFairTest = path_res+"-BiasedValidFairTest"
+                                path_res_biasedValidBiasedTest = path_res+"-BiasedValidBiasedTest"
+                                
+                                classifier = None #sens. attr. usage will not be computed
+                                path_results = path_start+"Results/"+pref+ds+'_'+bias+'_'+preproc+'_'+model+visibility+'_'
+                                all_metrics = a.get_all_metrics(n_pred_transf_biasedValidFairTest['pred'], n_pred_transf_biasedValidFairTest['orig'],classifier,ds,bias,path_start+pref,path_res_biasedValidFairTest,biased_test=False,recompute=False)
+                                a.metrics_for_plot(all_metrics,path_start=path_res_biasedValidFairTest)
+                                all_metrics_biased = a.get_all_metrics(n_pred_transf_biasedValidBiasedTest['pred'], n_pred_transf_biasedValidBiasedTest['orig'],classifier,ds,bias,path_start+pref,path_res_biasedValidBiasedTest,biased_test=True,recompute=False)
+                                a.metrics_for_plot(all_metrics_biased,path_start=path_res_biasedValidBiasedTest)
+
                                 #Manage memory
                                 #if computed :
                                 #    del n_pred_transf, n_pred_transf_unbiasedTruth, n_predBias_transf #, n_predBias_transf_unbiasedTruth
@@ -356,7 +386,7 @@ def pipeline(datasets:list[str], biases:list[str], bias_levels:list[float], prep
                                 computed = True #end postproc
                                 step =''
                             end = time.perf_counter()
-                            print("Experiment completed for "+str(ds)+' '+str(bias)+' '+str(preproc)+' '+str(model)+ ' '+str(postproc)+' in ',timedelta(seconds=end-stop))
+                            print("Experiment completed for "+str(ds)+' '+str(bias)+' '+str(preproc)+' '+str(model)+' in ',timedelta(seconds=end-stop))
 
                         computed = True #end blind
                         step = ''

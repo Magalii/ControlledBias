@@ -183,7 +183,7 @@ def pred_info(test_dataset: StandardDataset, pred_dataset: StandardDataset, fav_
     #del test_dataset, pred_dataset, metrics_object, pred_BLD_metrics
     return results
 
-def get_all_metrics(nk_pred, nk_train_splits, clas_type:str=None, dataset_name:str=None, bias_name:str=None, path_start: str = None, biased_test = False, to1 = False, recompute = False) :
+def get_all_metrics(nk_pred, nk_train_splits, clas_type:str=None, dataset_name:str=None, bias_name:str=None, path_data:str=None, path_results:str=None, biased_test=False, recompute = False) :
     """ Compute evaluation metrics for all the prediction datasets in nk_pred
     nk_pred : Dictionary {float: {int: StandardDataset}}
         Nested dictionaries where n_pred[b][f] holds the prediction given by model trained on fold nbr 'f' of dataset with bias level 'b'
@@ -209,7 +209,7 @@ def get_all_metrics(nk_pred, nk_train_splits, clas_type:str=None, dataset_name:s
     """
     if biased_test : biased = 'Biased'
     else : biased = ''
-    path = path_start+"_metrics"+biased+"_all.pkl"
+    path = path_results+"_metrics"+biased+"_all.pkl"
     if not recompute :
         try : #Check if the metrics have already been computed
             with open(path,"rb") as file:
@@ -217,8 +217,8 @@ def get_all_metrics(nk_pred, nk_train_splits, clas_type:str=None, dataset_name:s
         except (Exception, pickle.UnpicklingError) as err :
             recompute = True
     if recompute :
-        if clas_type in ['tree','RF'] : #Generate textual representation of trees before calling sens_attr_usage
-            txt_nk_trees(clas_type, dataset_name, bias_name, nk_pred[0][0].feature_names,to1=to1)
+        if clas_type in ['tree','RF'] : #Generate textual representation of trees before calling sens_attr_usage, only for expe on unmitigated models
+            txt_nk_trees(clas_type, dataset_name, bias_name, nk_pred[0][0].feature_names,path_retrieval=path_data)
         all_info = {}
         for b in nk_pred.keys() :
             all_info[b] = {}
@@ -243,19 +243,18 @@ def get_all_metrics(nk_pred, nk_train_splits, clas_type:str=None, dataset_name:s
                     print(test_fold.instance_names)
                     print("Size: "+str(len(test_fold.instance_names)))
                     exit()
-                if clas_type in ['tree','RF'] :
+                if clas_type in ['tree','RF'] : #compute sens. attr. usage only for expe on unmitigated models
                     if nk_pred[b][k] is not None :
                         all_info[b][k]['sens_attr_usage'] = sens_attr_usage(clas_type, dataset_name, nk_pred[b][k].protected_attribute_names[0], bias_name, b, k)
                     else :
                         all_info[b][k]['sens_attr_usage'] = np.nan
-                elif clas_type == 'neural': #clas_type == 'tree' or
+                elif clas_type == 'neural' :
                     all_info[b][k]['sens_attr_usage'] = np.nan
                 elif clas_type is not None :
                     print("WARNING Not a valid classifier type. Must be 'tree', 'RF' or 'neural'")
                 #Must keep separate conditions for nk_pred[b][k] and clas_type to be able to raise warning on class type
                 
-        if path_start is not None :
-            #file = open(path,"wb")
+        if path_results is not None :
             with open(path,"wb") as file:
                 pickle.dump(all_info,file)
     return all_info
@@ -305,8 +304,6 @@ def metrics_for_plot(nk_results_dict, path_start: str = None, memory_save = Fals
                             values[f]= nk_results_dict[b][f][metric]
                             if math.isnan(val):
                                 nan_count += 1
-                        #print("bias level :"+str(b))
-                        #print(values)
                         if nan_count > len(fold_keys)/2 : #Too much values are nan for usefull results (post-proc has failed for more than 50% of folds)
                             metrics_by_bias[metric]['mean'][i] = float('nan')
                             metrics_by_bias[metric]['stdev'][i] = float('nan')
@@ -329,7 +326,7 @@ def metrics_for_plot(nk_results_dict, path_start: str = None, memory_save = Fals
         
     return metrics_by_bias, all_bias
 
-def metrics_save_all(n_pred, n_pred_bias, nk_train_splits, path:str, clas_type:str=None, dataset_name:str=None, bias_name:str=None, sens_attr:str=None, to1=False, recompute=False) :
+def metrics_save_all(n_pred, n_pred_bias, nk_train_splits, path_data:str, path_results:str, clas_type:str=None, dataset_name:str=None, bias_name:str=None, sens_attr:str=None, to1=False, recompute=False) :
     """ Compute and save all metrics in both 'original' format and suitable for plots, with biased and unbiased test set
         Functions created to allow for the memory heavy computation to be done its own process
         clas_type : String, optional
@@ -343,24 +340,24 @@ def metrics_save_all(n_pred, n_pred_bias, nk_train_splits, path:str, clas_type:s
         Returns None
     """
     print("Unbiased test set")
-    all_metrics = get_all_metrics(n_pred, nk_train_splits, clas_type, dataset_name, bias_name, path_start=path, to1=to1, recompute=recompute)
-    metrics_for_plot(all_metrics,path_start=path)
+    all_metrics = get_all_metrics(n_pred, nk_train_splits, clas_type, dataset_name, bias_name, path_data, path_start=path_results, to1=to1, recompute=recompute)
+    metrics_for_plot(all_metrics,path_start=path_results)
 
     if n_pred_bias is not None :
         print("Biased test set")
-        all_metrics_biasedTest = get_all_metrics(n_pred_bias, nk_train_splits, clas_type, dataset_name, bias_name, biased_test=True, path_start=path, recompute=recompute)
-        path_biased = path+"_Biased"
+        all_metrics_biasedTest = get_all_metrics(n_pred_bias, nk_train_splits, clas_type, dataset_name, bias_name, biased_test=True, path_data=path_data, path_start=path_results, recompute=recompute)
+        path_biased = path_results+"_Biased"
         metrics_for_plot(all_metrics_biasedTest,path_start=path_biased)
 
-def metrics_all_format(n_pred, nk_train_splits, path, biased_test:bool, clas_type:str=None, dataset_name:str=None, bias_name:str=None, sens_attr:str=None, to1=False, recompute=False) :
+def metrics_all_format(n_pred, nk_train_splits, path_data, path_results, biased_test:bool, clas_type:str=None, dataset_name:str=None, bias_name:str=None, sens_attr:str=None, to1=False, recompute=False) :
     """ Compute and save all metrics in both 'original' format and suitable for plots, with biased and unbiased test set
         Functions created to allow for the memory heavy computation to be done in a separate processes
         Returns None
     """
-    all_metrics = get_all_metrics(n_pred, nk_train_splits, clas_type, dataset_name, bias_name, path, biased_test,to1=to1, recompute=recompute)
-    metrics_for_plot(all_metrics,path_start=path)
+    all_metrics = get_all_metrics(n_pred, nk_train_splits, clas_type, dataset_name, bias_name, path_data, path_results, biased_test,to1=to1, recompute=recompute)
+    metrics_for_plot(all_metrics,path_start=path_results)
 
-def txt_nk_trees(clas_type:str, dataset:str, bias_type:str, feature_names:list[str], to1=False, path_retrieval:str=None) :
+def txt_nk_trees(clas_type:str, dataset:str, bias_type:str, feature_names:list[str], path_retrieval:str) :
     """ Generate and saves textual representation of all the decision trees trained on 'dataset' with 'bias_type' (one tree for each bias level and fold)
         dataset : String
             name of dataset on which the trees where trained and which is used in the file name for the pickled dictionary of datasets
@@ -371,11 +368,7 @@ def txt_nk_trees(clas_type:str, dataset:str, bias_type:str, feature_names:list[s
         path_retrieval :
             path at which the pickled file containing the dictionary of datasets can be found
     """
-    if path_retrieval is None :
-        path_retrieval = "data/"
-    if to1 : pref = '0to1_'
-    else : pref = ''
-    path_trees = path_retrieval+pref+dataset+'_'+bias_type+'__'+clas_type+"Aware_all.pkl"
+    path_trees = path_retrieval+dataset+'_'+bias_type+'__'+clas_type+"Aware_all.pkl"
     try :
         with open(path_trees,"rb") as file:
             nk_classifier = pickle.load(file)
@@ -423,7 +416,7 @@ def txt_trees_all(clas_type:str, dataset_list:list[str], bias_list:list[str], pa
         with open(path_data,"rb") as file:
             ds_obj = pickle.load(file)
         for bias in bias_list :
-            txt_nk_trees(clas_type, dataset, bias, ds_obj.feature_names, to1, path_retrieval+pref)
+            txt_nk_trees(clas_type, dataset, bias, ds_obj.feature_names, path_retrieval+pref)
 
 
 def sens_attr_usage_all(clas_type:str, dataset_list:list[str], bias_list:list[str],
@@ -516,7 +509,7 @@ def sens_attr_usage(clas_type:str, dataset_name:str, sens_attr:str, bias_name:st
     sens_attr = "'"+sens_attr+" >'"
     if bias_level == 0 : b = "0.0"
     else : b = str(bias_level)
-    file_names = clas_type+"s/tree_"+dataset_name+"_"+bias_name+"_b"+b+"k"+str(fold_num)+"*.txt" #If there is no suck file, process doesn't fail
+    file_names = "data/"+clas_type+"s/tree_"+dataset_name+"_"+bias_name+"_b"+b+"k"+str(fold_num)+"*.txt" #If there is no such file, process doesn't fail
     process = subprocess.Popen(["grep -c "+sens_attr+" "+file_names+" | grep -v ':0' | grep -c "+dataset_name],shell=True,stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     stdout,stderr = process.communicate()
     result = int((stdout))/num_tree # Save proportion of individual trees that use the sensitive attribute (100 trees per RF)
@@ -527,41 +520,6 @@ def sens_attr_usage(clas_type:str, dataset_name:str, sens_attr:str, bias_name:st
     # grep -c "sex >" *_student_* | grep -v ":0" | grep -c "student" @ Counts the number of file which name contain "student" that contain an occurence of 'sex'
 
     return result
-
-"""
-# WARNING
-#Goal to compute the proportion of trees that use the sensitive attribute in their features :
-#DOESN'T GIVE THE SAME RESULTS AS sens_attr_usage()
-def sens_attr_prop(classifier, sens_attr:str, feature_names:list[str]) : #bias_name:str
-    if type(classifier) == RandomForestClassifier : num_tree = 100
-    elif type(classifier) == DecisionTreeClassifier : num_tree = 1
-    else : print("WARNING Not a valid type of tree based classifer. clas_type must be 'tree' or 'RF'")
-    #if bias_name in ['selectLow','selectDoubleProp','selectRandom','selectPrivNoUnpriv'] : folds = 5
-    #elif bias_name in ['label','labelDouble'] : folds = 10
-    #else : print("WARNING Not a valid bias type")
-    if type(classifier) == DecisionTreeClassifier :
-       count = _count_feature_use(sens_attr, feature_names, classifier.feature_importances_)
-    elif type(classifier) == RandomForestClassifier :
-        count = 0
-        for est in classifier.estimators_ :
-            count += _count_feature_use(sens_attr, feature_names, est.feature_importances_)
-    else :
-        print("WARNING Wrong tree-based classifier name. Only DecisionTreeClassifier' and RandomForestClassifier are supported")
-    result = count/num_tree
-    return result
-
-def _count_feature_use(feature, features_list, features_importances):
-    count = 0
-    used_features = []
-    for i in range(len(features_list)) :
-        if features_importances[i] > 0 :
-            used_features += [features_list[i]]
-    #print(used_features)
-    #print(feature)
-    if feature in used_features :
-        count += 1
-    return count
-"""
 
 def compute_all(data_list, bias_list, preproc_list, postproc_list, model_list, blinding_list, path_start, no_valid = False, to1 = False, recompute=False) :
     """ Compute and save evaluation metrics for all combinations of datasets, bias, preproc, model and blinding given as argument
@@ -599,11 +557,11 @@ def compute_all(data_list, bias_list, preproc_list, postproc_list, model_list, b
                                 n_pred_bias = pickle.load(file)
                             # Compute in distinct process for memory management
                             path_res = path_start+"Results/"+pref+ds+'_'+bias+valid+'_'+preproc+'_'+model+visibility+'_'
-                            proc1 = mp.Process(target = metrics_all_format, args=(n_pred['pred'], n_pred['orig'], path_res, False, model, ds, bias,sens_attr,to1,recompute))
+                            proc1 = mp.Process(target = metrics_all_format, args=(n_pred['pred'], n_pred['orig'], path_start, path_res, False, model, ds, bias,sens_attr,to1,recompute))
                             proc1.start()
                             proc1.join()
                             path_res_biased = path_res+"_Biased"
-                            proc1 = mp.Process(target = metrics_all_format, args=(n_pred_bias['pred'], n_pred_bias['orig'], path_res_biased, True, model, ds, bias,sens_attr,to1,recompute))
+                            proc1 = mp.Process(target = metrics_all_format, args=(n_pred_bias['pred'], n_pred_bias['orig'], path_start, path_res_biased, True, model, ds, bias,sens_attr,to1,recompute))
                             proc1.start()
                             proc1.join()
                             del n_pred, n_pred_bias
@@ -626,13 +584,13 @@ def compute_all(data_list, bias_list, preproc_list, postproc_list, model_list, b
                                 path_res_biasedValidFairTest = path_res+"-BiasedValidFairTest"
                                 path_res_biasedValidBiasedTest = path_res+"-BiasedValidBiasedTest"
                                 #path_res_fairValidFairTest = path_res+"-FairValidFairTest"
-                                proc = mp.Process(target = metrics_all_format, args=(n_pred_transf_biasedValidFairTest['pred'], n_pred_transf_biasedValidFairTest['orig'], path_res_biasedValidFairTest, False, model, ds, bias, recompute))
+                                proc = mp.Process(target = metrics_all_format, args=(n_pred_transf_biasedValidFairTest['pred'], n_pred_transf_biasedValidFairTest['orig'], path_start, path_res_biasedValidFairTest, False, model, ds, bias, recompute))
                                 proc.start()
                                 proc.join()
-                                proc = mp.Process(target = metrics_all_format, args=(n_pred_transf_biasedValidBiasedTest['pred'], n_pred_transf_biasedValidBiasedTest['orig'], path_res_biasedValidBiasedTest, True, model, ds, bias, recompute))
+                                proc = mp.Process(target = metrics_all_format, args=(n_pred_transf_biasedValidBiasedTest['pred'], n_pred_transf_biasedValidBiasedTest['orig'], path_start, path_res_biasedValidBiasedTest, True, model, ds, bias, recompute))
                                 proc.start()
                                 proc.join()
-                                #proc = mp.Process(target = metrics_all_format, args=(n_pred_transf_FairValidFairTest['pred'], n_pred_transf_FairValidFairTest['orig'], path_res_fairValidFairTest, False, model, ds, bias))
+                                #proc = mp.Process(target = metrics_all_format, args=(n_pred_transf_FairValidFairTest['pred'], n_pred_transf_FairValidFairTest['orig'], path_start, path_res_fairValidFairTest, False, model, ds, bias))
                                 #proc.start()
                                 #proc.join()
                                 del n_pred_transf_biasedValidFairTest, n_pred_transf_biasedValidBiasedTest#, n_pred_transf_FairValidFairTest

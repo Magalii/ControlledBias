@@ -2,7 +2,7 @@
 data/*.pkl
 data/*_dataset
 data/Results/*.pkl
-data/RFS/*.txt
+data/RFs/*.txt
 data/trees/*.txt
 plots/*.pdf
 plots/*.png
