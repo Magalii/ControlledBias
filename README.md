@@ -18,7 +18,7 @@ This branch contains the code for submitted article "No evaluation without fair 
 
 To reproduce the experiments, run the file 'run_expe.py' with Python. Experiment settings can be changed in that file.
 
-The OULAD dataset needs to be downloaded beforehand and the different CVS files placed in the directory 'dataset/OULAD'. They can downloaded from the [UCI ML repository][UCIrepo].
+The OULAD dataset needs to be downloaded beforehand and the different CVS files placed in the directory 'dataset/OULAD'. They can be downloaded from the [UCI ML repository][UCIrepo].
 
 [UCIrepo]: https://archive.ics.uci.edu/dataset/349/open+university+learning+analytics+dataset
 
@@ -30,7 +30,7 @@ The OULAD dataset needs to be downloaded beforehand and the different CVS files 
     - pandas
     - numpy
 - A minimum of 16GB RAM
-- Around 7,5Gb of disk space to store some intermediate results. The amount of intermediate results saved can be adjusted in run_expe.py
+- Around 8Gb of disk space to store some intermediate results. The amount of intermediate results saved can be adjusted in run_expe.py
 
 ## Aditionnal results
 
