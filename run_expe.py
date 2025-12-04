@@ -103,7 +103,7 @@ results_path = path_start+"Results/"
 plot_path = "plots/"
 
 #What experiment should be performed ?
-expe_select = False # Impact of bias on models
+expe_select = True # Impact of bias on models
 expe_comp = True # Comparison of mitigation methods
 run_expe = True # False to avoid running expe (usefull to merely plot results)
 #What graphs should be plotted ?
