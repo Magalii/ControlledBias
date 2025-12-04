@@ -30,7 +30,7 @@ The OULAD dataset needs to be downloaded beforehand and the different CVS files 
     - pandas
     - numpy
 - A minimum of 16GB RAM
-- Around 7,5Gb of disk space to store some intermediate results. The amount of intermediate results saved can be adjusted in run_expe.py
+- Around 8Gb of disk space to store some intermediate results. The amount of intermediate results saved can be adjusted in run_expe.py
 
 ## Aditionnal results
 
