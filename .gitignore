@@ -1,6 +1,11 @@
 # My files
 data/*.pkl
+data/*_dataset
+data/Results/*.pkl
+data/RFs/*.txt
+data/trees/*.txt
 plots/*.pdf
+plots/*.png
 dataset/OULAD/OULAD.names
 dataset/OULAD/assessments.csv
 dataset/OULAD/courses.csv
@@ -8,6 +13,8 @@ dataset/OULAD/studentAssessment.csv
 dataset/OULAD/studentRegistration.csv
 dataset/OULAD/studentVle.csv
 dataset/OULAD/vle.csv
+a_exclure_des_backup.txt
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

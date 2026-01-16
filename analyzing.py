@@ -1,40 +1,91 @@
-import matplotlib.pyplot as plt
+"""
+    Methods the compute evaluation metrics
+"""
+
+import multiprocessing as mp
 import pandas as pd
 import numpy as np
+import subprocess
+import warnings
 import pickle
-import sys 
-sys.path.append('Code/')
-sys.path.append('Code/parent_aif360')
+import math
+import gc
+import sys
+sys.path.append('../')
+sys.path.append('parent_aif360')
 
 from aif360.datasets import BinaryLabelDataset
 from aif360.datasets import StandardDataset
 from aif360.metrics import BinaryLabelDatasetMetric #Metrics about 1 dataset
 from aif360.metrics.classification_metric import ClassificationMetric #Metrics about 2 datasets
+from sklearn.preprocessing import MaxAbsScaler
 from sklearn.metrics import f1_score
+from sklearn.metrics import roc_auc_score
+from sklearn.tree import export_text
 
-#from ControlledBias import dataset_creation as dc
-from ControlledBias import model_training as mt
+import model_training as mt
+import fairness_intervention as fair
+import consistency_metrics as cm
 
 def dataset_info(BLDataset: BinaryLabelDataset, fav_one=True) :
-    sens_attr = BLDataset.protected_attribute_names[0]
-    priv = [{sens_attr : int(fav_one)}]
-    unpriv = [{sens_attr : 1-int(fav_one)}]
-    metrics_obj = BinaryLabelDatasetMetric(BLDataset, unprivileged_groups=unpriv, privileged_groups=priv)
-    metrics = {}
-    metrics["num_instances"] = metrics_obj.num_instances()
-    metrics["num_privileged"] = metrics_obj.num_instances(privileged=True)
-    metrics["num_unprivileged"] = metrics_obj.num_instances(privileged=False)
-    metrics["base_rate"] = metrics_obj.base_rate()
-    metrics["priv_base_rate"] = metrics_obj.base_rate(privileged=True)
-    metrics["unpriv_base_rate"] = metrics_obj.base_rate(privileged=False)
-    metrics["priv_num_positive"] = metrics_obj.num_positives(privileged=True)
-    metrics["unpriv_num_positive"] = metrics_obj.num_positives(privileged=False)
-    metrics["SP_diff"] = metrics_obj.statistical_parity_difference()
-    metrics["DP"] = metrics_obj.disparate_impact()
+    """
+    Compute metrics for dataset 'BLDataset'
+    fav_one (bool) : True if the favored group is indicated by 1.0 in the dataset and the unprivileged group by 0.0, False for the opposite
+    """
+    if BLDataset is  not None :
+        sens_attr = BLDataset.protected_attribute_names[0]
+        priv = [{sens_attr : int(fav_one)}]
+        unpriv = [{sens_attr : 1-int(fav_one)}]
+        metrics_obj = BinaryLabelDatasetMetric(BLDataset, unprivileged_groups=unpriv, privileged_groups=priv)
+        dataset_mod = BLDataset.copy()
+        dataset_mod.features = fair.blind_features(BLDataset) #remove sensitive attribute
+        min_max_scaler = MaxAbsScaler()
+        dataset_mod.features = min_max_scaler.fit_transform(dataset_mod.features) #scale
+        metrics_obj_blind = BinaryLabelDatasetMetric(dataset_mod, unprivileged_groups=unpriv, privileged_groups=priv)
+        metrics = {}
+        num_inst = metrics_obj.num_instances()
+        metrics["num_instances"] = num_inst
+        num_priv = metrics_obj.num_instances(privileged=True)
+        num_unpriv = num_inst - num_priv
+        priv_num_positive = metrics_obj.num_positives(privileged=True)
+        unpriv_num_positive = metrics_obj.num_positives(privileged=False)
+        metrics["num_privileged"] = num_priv
+        metrics["priv_num_positive"] = priv_num_positive
+        metrics["priv_num_negative"] = num_priv - priv_num_positive
+        metrics["num_unprivileged"] = num_unpriv
+        metrics["unpriv_num_positive"] = unpriv_num_positive
+        metrics["unpriv_num_negative"] = num_unpriv - unpriv_num_positive
+        metrics["base_rate"] = (priv_num_positive+unpriv_num_positive)/num_inst
+        priv_base_rate = priv_num_positive/num_priv
+        unpriv_base_rate = unpriv_num_positive/num_unpriv
+        metrics["priv_base_rate"] = priv_base_rate
+        metrics["unpriv_base_rate"] = unpriv_base_rate
+        metrics["SP_diff"] = unpriv_base_rate - priv_base_rate
+        metrics["DP"] = unpriv_base_rate/priv_base_rate
+        try :
+            metrics["Consistency"] = metrics_obj.consistency()[0]
+            metrics["BlindCons"] = metrics_obj_blind.consistency()[0]
+            metrics["Cons_mine"] = cm.consistency(BLDataset)
+            metrics["BCC"] = cm.bcc(BLDataset)
+            metrics["BCC_penalty"] = cm.bcc(BLDataset,penalty=1)
+        except ValueError as err :
+            print(str(err) + "\n Consistency related metrics are set to NaN")
+            metrics['Consistency'] = np.nan
+            metrics["BlindCons"] = np.nan
+            metrics["Cons_mine"] = np.nan
+            metrics["BCC"] = np.nan
+            metrics["BCC_penalty"] = np.nan
+    else :
+        metrics = dict.fromkeys(['num_instances','num_privileged','priv_num_positive','priv_num_negative','num_unprivileged','unpriv_num_positive','unpriv_num_negative',
+                                   'base_rate','priv_base_rate','unpriv_base_rate','SP_diff','DP','Consistency','BlindCons','Cons_mine','BCC','BCC_penalty',]
+                                 ,np.nan)
 
     return metrics
 
 def dataset_info_comparison(ds1: BinaryLabelDataset, ds2: BinaryLabelDataset) :
+    """
+    Compute metrics for datasets 'ds1' and 'ds2' and display their respective results and the difference between the two values
+    """
     info_ds1 = dataset_info(ds1)
     info_ds2 = dataset_info(ds2)
     res = {}
@@ -53,47 +104,102 @@ def nbr_id_affected(df1: pd.DataFrame, df2: pd.DataFrame) :
     return len(res.index)
 
 def pred_info(test_dataset: StandardDataset, pred_dataset: StandardDataset, fav_one=True) :
-    sens_attr = test_dataset.protected_attribute_names[0]
-    priv = [{sens_attr : int(fav_one)}]
-    unpriv = [{sens_attr : 1-int(fav_one)}]
-    test_data = mt.get_subset(test_dataset, pred_dataset) #only keep test instances that are also in predictions (needed in case of undersampling)
-    metrics_object = ClassificationMetric(test_data, pred_dataset, unprivileged_groups=unpriv, privileged_groups=priv)
-    pred_BLD_metrics = BinaryLabelDatasetMetric(pred_dataset, unprivileged_groups=unpriv, privileged_groups=priv)
-    results = {}
-    #Performances measures
-    results['base_rate'] = metrics_object.base_rate()
-    results['acc'] = metrics_object.accuracy()
-    results['TPR'] = metrics_object.true_positive_rate()
-    results['TNR'] = metrics_object.true_negative_rate()
-    results['FPR'] = metrics_object.false_positive_rate()
-    results['FNR'] = metrics_object.false_negative_rate()
-    results['F1'] = f1_score(test_dataset.labels, pred_dataset.labels)
-    #Fairness measures
-    #results['DP_ratio'] = metrics_object.disparate_impact()
-    results['StatParity'] = metrics_object.statistical_parity_difference()
-    results['Consistency'] = pred_BLD_metrics.consistency()
-    results['EqqOppDiff'] = metrics_object.equal_opportunity_difference() # = TPRunpriv-TPRpriv = FNRpriv-FNRunpriv
-    results['EqqOddsDiff'] = metrics_object.equalized_odds_difference() 
-    results['FalseDiscRate'] = metrics_object.false_discovery_rate_difference()
-    results['FalsePosRateDiff'] = metrics_object.false_positive_rate_difference()
-    results['FalseNegRateDiff'] = metrics_object.false_negative_rate_difference()
-    results['GenEntropyIndex'] = metrics_object.generalized_entropy_index()
-
-    results['ConfMatrAll'] = metrics_object.binary_confusion_matrix()
-    results['ConfMatrUnpriv'] = metrics_object.binary_confusion_matrix(False)
-    results['ConfMatrPriv'] = metrics_object.binary_confusion_matrix(True)
-    #print(metrics_object.binary_confusion_matrix())
-
-    del test_dataset, pred_dataset, metrics_object, pred_BLD_metrics
+    """ Compute evaluation metrics for the predictions in 'pred_datasets'. Sets all metris to numpy.nan if pred_dataset is None
+        test_dataset : StandardDataset
+            Dataset holding the labels considered as ground truth for the evaluation
+        pred_dataset : StandardDataset
+            Dataset with the prediction to be evaluated, may be None if no predictions could be made (e.g, post-proc couldn't be computed)
+            Must only different from test_dataset in labels
+        fav_one : Boolean
+            True if the favored group is indicated by 1.0 in the dataset and the unprivileged group by 0.0, False for the opposite
+    """
+    #If a new metric is added, it must also be added to the dict for the case where pred_dataset is None
+    warnings.simplefilter("ignore", category=RuntimeWarning) #Ignores RuntimeWarning about invalid value encountered in scalar divide
+    if pred_dataset is not None :
+        sens_attr = test_dataset.protected_attribute_names[0]
+        priv = [{sens_attr : int(fav_one)}]
+        unpriv = [{sens_attr : 1-int(fav_one)}]
+        #TODO line bellow fails if pred_data is None
+        test_data = mt.get_subset(test_dataset, pred_dataset) #only keep test instances that are also in predictions (needed in case of undersampling)
+        metrics_object = ClassificationMetric(test_data, pred_dataset, unprivileged_groups=unpriv, privileged_groups=priv)
+        pred_BLD_metrics = BinaryLabelDatasetMetric(pred_dataset, unprivileged_groups=unpriv, privileged_groups=priv)
+        # Create BinaryLabelDatasetMetric blind to sensitive attribute to compute blind consistency
+        min_max_scaler = MaxAbsScaler()
+        blind_pred = pred_dataset.copy()
+        blind_pred.features = fair.blind_features(pred_dataset)
+        blind_pred.features = min_max_scaler.fit_transform(blind_pred.features)
+        #Warning: blind_pred.feature_names does not correspond to blind_pred.features
+        pred_blind_BLD_metrics = BinaryLabelDatasetMetric(blind_pred, unprivileged_groups=unpriv, privileged_groups=priv)
+        results = {}
+        #Performances measures
+        tpr = metrics_object.true_positive_rate()
+        tnr = metrics_object.true_negative_rate()
+        results['base_rate'] = metrics_object.base_rate()
+        results['acc'] = metrics_object.accuracy()
+        results['accBal'] = (tpr+tnr)/2
+        results['TPR'] = tpr
+        results['TNR'] = tnr
+        results['FPR'] = metrics_object.false_positive_rate()
+        results['FNR'] = metrics_object.false_negative_rate()
+        results['F1'] = f1_score(test_dataset.labels, pred_dataset.labels)
+        try : 
+            results['ROCAUC'] = roc_auc_score(test_dataset.labels, pred_dataset.scores)
+        except ValueError as err :
+            print(str(err) + "\n ROC-AUC is set to NaN")
+            results['ROCAUC'] = np.nan
+        #Fairness measures
+        #results['DP_ratio'] = metrics_object.disparate_impact()
+        results['StatParity'] = metrics_object.statistical_parity_difference()
+        try :
+            results['Consistency'] = pred_BLD_metrics.consistency()[0] #Out of the box AIF360 metric
+            results['BlindCons'] = pred_blind_BLD_metrics.consistency()[0] #Sens. attr. excluded from features for proximity
+            results["Cons_mine"] = cm.consistency(pred_dataset) #For proximity measure : sensitive attribute is excluded, features are scaled, individuals aren't considered as one of their neighbors
+            results['BCC'] = cm.bcc(pred_dataset)
+            results['BCC_penalty'] = cm.bcc(pred_dataset,penalty=1)
+        except ValueError as err :
+            print(str(err) + "\n Consistency related metrics are set to NaN")
+            results['Consistency'] = np.nan
+            results['BlindCons'] = np.nan
+            results['Cons_mine'] = np.nan
+            results['BCC'] = np.nan
+            results['BCC_penalty'] = np.nan
+        results['EqqOppDiff'] = metrics_object.equal_opportunity_difference() # = TPRunpriv-TPRpriv = FNRpriv-FNRunpriv
+        results['EqqOddsDiff'] = metrics_object.equalized_odds_difference() 
+        results['AvOddsDiff'] = metrics_object.average_odds_difference()
+        results['FalseDiscRate'] = metrics_object.false_discovery_rate_difference()
+        results['FalsePosRateDiff'] = metrics_object.false_positive_rate_difference()
+        results['FalseNegRateDiff'] = metrics_object.false_negative_rate_difference()
+        results['GenEntropyIndex'] = metrics_object.generalized_entropy_index()
+        results['ConfMatrAll'] = metrics_object.binary_confusion_matrix()
+        results['ConfMatrUnpriv'] = metrics_object.binary_confusion_matrix(False)
+        results['ConfMatrPriv'] = metrics_object.binary_confusion_matrix(True)
+        #print(metrics_object.binary_confusion_matrix())
+    else :
+        results = dict.fromkeys(['base_rate','acc','accBal','TPR','TNR','FPR','FNR','F1','ROCAUC',
+                                 'StatParity','Consistency','BlindCons','Cons_mine','BCC','BCC_penalty','EqqOppDiff','EqqOddsDiff','AvOddsDiff',
+                                 'FalseDiscRate','FalsePosRateDiff','FalseNegRateDiff','GenEntropyIndex',
+                                 'ConfMatrAll','ConfMatrUnpriv','ConfMatrPriv',]
+                                 ,np.nan)
+    #del test_dataset, pred_dataset, metrics_object, pred_BLD_metrics
     return results
 
-def get_all_metrics(test_nk_dict, nk_pred, path_start: str = None, biased_test = False, memory_save = False) :
-    """
-    test_nk_dict : Dictionary {float: list[StandardDataset]}
-        Dictionary where keys are bias levels and object are the lists of datasets used as test sets for the different folds
+def get_all_metrics(nk_pred, nk_train_splits, clas_type:str=None, dataset_name:str=None, bias_name:str=None, path_data:str=None, path_results:str=None, biased_test=False, recompute = False) :
+    """ Compute evaluation metrics for all the prediction datasets in nk_pred
     nk_pred : Dictionary {float: {int: StandardDataset}}
         Nested dictionaries where n_pred[b][f] holds the prediction given by model trained on fold nbr 'f' of dataset with bias level 'b'
-        The folds numbering has to correspond to that of test_nk_dict
+        May be None if no predictions could be made (e.g, post-proc couldn't be computed)
+    nk_train_splits : Dictionary {float: {int: StandardDataset}}
+        Embedded dictionaries containing the datasets holding the ground truth
+        nk_train_splits[bias][fold]: {'train': train set, 'test': test set}
+    clas_type : String, optional
+        if not None, textual representation of trees must be available
+        if 'tree' or 'RF', proportion of sens. attribute usage by classifiers is computed and added to results dict
+        if 'neural', sens_attr_usage is added to results dict and set to None
+        if None, sens_attr_usage is NOT added to results dict
+    dataset_name : str, optional
+        Necessary if 'clas_type' is not None, name of dataset used to trained the model for which metrics are computed
+    bias_name : str, optional
+        Necessary if 'clas_type' is not None, type of bias in the data used to trained the model for which metrics are computed
     biased_test : Boolean
         Wether the test set has feature bias level 'b' (True) or is a subset of the original (considered unbiased) dataset (False)
     Returns
@@ -101,428 +207,394 @@ def get_all_metrics(test_nk_dict, nk_pred, path_start: str = None, biased_test =
     Dictionary {float: {int: {str: float}}}
         all_info[b][f][metric_name] = Value of 'metric_name' obtained for fold nbr 'k' of model trained with bias level 'b'
     """
-    all_info = {}
-    for b in nk_pred.keys() :
-        all_info[b] = {}
-        #for k in nk_pred[b].keys() :
-        for k in range(len(nk_pred[b])) :
-            if biased_test : #test set has the same level of bias as training set
-                test_fold = test_nk_dict[b][k]
-            else : #test set is a subset of the original (considered unbiased) dataset
-                test_fold = test_nk_dict[0][k]
-            #print("bias : "+str(b) + " fold : "+str(k))
-            all_info[b][k] = pred_info(test_fold, nk_pred[b][k])
-
-    if path_start is not None :
-        if biased_test :
-            biased = 'Biased'
-        else :
-            biased = ''
-        path = path_start+"_metrics"+biased+"_all.pkl"
-        #file = open(path,"wb")
-        with open(path,"wb") as file:
-            pickle.dump(all_info,file)
-        #file.close()
-    
-    del test_nk_dict, nk_pred
-    if memory_save :
-        del all_info
-        all_info = None
-
+    if biased_test : biased = 'Biased'
+    else : biased = ''
+    path = path_results+"_metrics"+biased+"_all.pkl"
+    if not recompute :
+        try : #Check if the metrics have already been computed
+            with open(path,"rb") as file:
+                all_info = pickle.load(file)
+        except (Exception, pickle.UnpicklingError) as err :
+            recompute = True
+    if recompute :
+        if clas_type in ['tree','RF'] : #Generate textual representation of trees before calling sens_attr_usage, only for expe on unmitigated models
+            txt_nk_trees(clas_type, dataset_name, bias_name, nk_pred[0][0].feature_names,path_retrieval=path_data)
+        all_info = {}
+        for b in nk_pred.keys() :
+            all_info[b] = {}
+            #for k in nk_pred[b].keys() :
+            for k in range(len(nk_pred[b])) :
+                if nk_pred[b][k] is not None :
+                    if biased_test : #test set has the same level of bias as training set
+                        test_fold = nk_train_splits[b][k]['test']
+                    else : #test set is a subset of the original (considered unbiased) dataset
+                        test_fold = nk_train_splits[0][k]['test']
+                else :
+                    test_fold = None
+                try :
+                    all_info[b][k] = pred_info(test_fold, nk_pred[b][k])  
+                except ValueError as err :
+                    print("ValueError: {}".format(err))#print("bias : "+str(b) + " fold : "+str(k))
+                    print("Error when pred_info is called by function get_all_metrics")
+                    print("nk_pred[b][k]")
+                    print(nk_pred[b][k].instance_names)
+                    print("Size: "+str(len(nk_pred[b][k].instance_names)))
+                    print("test_fold")
+                    print(test_fold.instance_names)
+                    print("Size: "+str(len(test_fold.instance_names)))
+                    exit()
+                if clas_type in ['tree','RF'] : #compute sens. attr. usage only for expe on unmitigated models
+                    if nk_pred[b][k] is not None :
+                        all_info[b][k]['sens_attr_usage'] = sens_attr_usage(clas_type, dataset_name, nk_pred[b][k].protected_attribute_names[0], bias_name, b, k)
+                    else :
+                        all_info[b][k]['sens_attr_usage'] = np.nan
+                elif clas_type == 'neural' :
+                    all_info[b][k]['sens_attr_usage'] = np.nan
+                elif clas_type is not None :
+                    print("WARNING Not a valid classifier type. Must be 'tree', 'RF' or 'neural'")
+                #Must keep separate conditions for nk_pred[b][k] and clas_type to be able to raise warning on class type
+                
+        if path_results is not None :
+            with open(path,"wb") as file:
+                pickle.dump(all_info,file)
     return all_info
 
-def compute_all(data_list, bias_list, preproc_list, model_list, blinding_list, path_start) :
-    """ Compute and save evaluation metrics for all combinations of datasets, bias, preproc, model and blinding given as argument
-        Dataset splits and predictions must already be saved and be store at 'path_start'
-        Returns None
-        WARNING Uses a lot of RAM. Best to note compute everything in one go
-    """
-
-    #bias_levels = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]
-    #path_start = "Code/ControlledBias/data/"
-    #datasets = ['OULAD', 'student']  #, 'student' OULAD
-    #biases = ['label','selectDouble','selectLow'] #,'selectDouble','selectLow' label
-    #preproc_methods = ['', 'reweighting', 'lfr','massaging']
-    #ftu corresponds to no preproc + blind model
-    #classifiers = ['RF','tree','RF','neural']
-    #blind_model = [True,False]
-    for ds in data_list :
-        for bias in bias_list :
-            #Retrieve original (biased) data for test set
-            path = path_start+ds+'_'+bias
-            with open(path+"_nbias_splits_datasets.pkl","rb") as file:
-                nk_folds_dict = pickle.load(file)
-            for preproc in preproc_list :
-                for model in model_list :
-                    for blind in blinding_list :
-                        if blind :
-                            visibility = 'Blinded'
-                        else :
-                            visibility = 'Aware'
-                        path = path_start+ds+'_'+bias+'_'+preproc+'_'+model+visibility
-                        print("Computing metrics for "+path)
-                        #Retrieve predictions
-                        with open(path+"_pred_all.pkl","rb") as file:
-                            n_pred = pickle.load(file)
-                        path_biased = path+"_biasedTest"
-                        with open(path_biased+"_pred_all.pkl","rb") as file:
-                            n_pred_bias = pickle.load(file)
-                        
-                        path = path_start+"Results/"+ds+'_'+bias+'_'+preproc+'_'+model+visibility
-
-                        all_metrics = get_all_metrics(nk_folds_dict, n_pred, path_start=path)
-                        path_biased = path+"_Biased"
-                        all_metrics_biasedTest = get_all_metrics(nk_folds_dict, n_pred_bias, biased_test=True, path_start=path)
-
-                        metr_plots = metrics_for_plot(all_metrics,path_start=path)
-                        path_biased = path+"_Biased"
-                        bias_metr_plots = metrics_for_plot(all_metrics_biasedTest,path_start=path_biased)
-                        
-                        #Manage memory
-                        del n_pred, all_metrics, all_metrics_biasedTest, metr_plots, bias_metr_plots
-            del nk_folds_dict
-
-                        
-def plot_all(data_list, bias_list, preproc_list, model_list, blinding_list, all_bias, path_start) :
-    """ Plot and save results for all combinations of datasets, bias, preproc, model and blinding given as argument
-        Dataset splits metrics for plots must already be saved and be store at 'path_start'
-        Returns None
-    """
-    for ds in data_list :
-        for bias in bias_list :
-            for preproc in preproc_list :
-                for model in model_list :
-                    for blind in blinding_list :
-                        if blind :
-                            visibility = "Blinded"
-                        else :
-                            visibility = "Aware"
-                        path = path_start+"Results/"+ds+'_'+bias+'_'+preproc+'_'+model+visibility
-                        with open(path+"_metricsForPlot.pkl","rb") as file:
-                            metrics_for_plot = pickle.load(file)
-                        with open(path+"_Biased"+"_metricsForPlot.pkl","rb") as file:
-                            metricsBiased_for_plot = pickle.load(file)
-                        plot_by_bias(metrics_for_plot, all_bias, plot_style='FILLED_STDEV',title='Metric values wrt train set bias level\n ('+bias+' bias, '+preproc+', '+model+visibility+', unbiased test set)', path_start='Code/ControlledBias/plots/'+ds+'_'+bias+'_'+preproc+'_'+model+visibility+'_byBias_unbiasedTest', display=False)
-                        plot_by_bias(metricsBiased_for_plot, all_bias, plot_style='FILLED_STDEV', title='Metric values wrt train set bias level\n ('+bias+' bias, '+preproc+', '+model+visibility+', biased test set)',path_start='Code/ControlledBias/plots/'+ds+'_'+bias+'_'+preproc+'_'+model+visibility+'_byBias_BiasedTest', display=False)
-                        #Manage memory
-                        metrics_for_plot = None
-                        metricsBiased_for_plot = None 
-
 def metrics_for_plot(nk_results_dict, path_start: str = None, memory_save = False, fold: int = None) :
-    """
+    """Take a dictionary of metrics computed using get_all_metrics() and returns a dictionary of metrics that is more convenient for plotting results
     nk_results_dic : Dictionary {float: {int: {str: float}}}
         Nested dictionaries where nk_results_dic[b][f][metric_name] = Value of 'metric_name' obtained for fold nbr 'k' of model trained with bias level 'b'
+    path_start: String
+        if not None, save results dict on disk at address 'path_start' + function postfix
     """
-    all_bias = list(nk_results_dict.keys())
-    n = len(all_bias)
-    bias_keys = nk_results_dict.keys()
-    k = len(nk_results_dict[0])
-    fold_keys = range(k)
-    metrics_keys = nk_results_dict[0][0].keys()
-    if fold is not None :
-        metrics_by_bias = {} #key: metric, object : List of metrics values for each bias level 'b'
-        #metrics_by_bias[metric][bias] = metric value (for one fold or avg over all folds)
-        for metric in metrics_keys :
-            i = 0
-            metrics_by_bias[metric] =  [0]*n #List of metric values for each bias level 'b'
-            for b in bias_keys:
-                metrics_by_bias[metric][i] = nk_results_dict[b][fold][metric]
-                i+=1
-    else :
-        metrics_by_bias = {} #key: metric, object : Dict holding mean and stdev for bias level 'b'
-        #metrics_by_bias[metric][mean or std][b] = List of avg metrics values for bias level 'b'
-        for metric in metrics_keys :
-            if type(nk_results_dict[all_bias[0]][list(fold_keys)[0]][metric]) is not dict :
+    path = path = path_start+"_metricsForPlot.pkl"
+    try : #Check if the metrics have already been computed
+        with open(path,"rb") as file:
+            metrics_by_bias = pickle.load(file)
+            all_bias = None
+    except (Exception, pickle.UnpicklingError) as err :
+        all_bias = list(nk_results_dict.keys())
+        n = len(all_bias)
+        bias_keys = nk_results_dict.keys()
+        k = len(nk_results_dict[0])
+        fold_keys = range(k)
+        metrics_keys = nk_results_dict[0][0].keys()
+        if fold is not None : #Get results for a specific fold only
+            metrics_by_bias = {} #key: metric, object : List of metrics values for each bias level 'b'
+            #metrics_by_bias[metric][bias] = metric value (for one fold or avg over all folds)
+            for metric in metrics_keys :
                 i = 0
-                metrics_by_bias[metric] = {}
-                metrics_by_bias[metric]['mean'] = np.zeros(n) #List of mean metric values for each bias level 'b'
-                metrics_by_bias[metric]['stdev'] = np.zeros(n) #[0]*n
-                for b in bias_keys :
-                    values = [0]*k
-                    for f in fold_keys : #k in fold nbr
-                        values[f]= nk_results_dict[b][f][metric]
-                    metrics_by_bias[metric]['mean'][i] = np.mean(values)
-                    metrics_by_bias[metric]['stdev'][i] = np.std(values)
+                metrics_by_bias[metric] =  [0]*n #List of metric values for each bias level 'b'
+                for b in bias_keys:
+                    metrics_by_bias[metric][i] = nk_results_dict[b][fold][metric]
                     i+=1
-            else :
-                pass
-                #TODO
+        else : #Get results for all folds and compute mean and stdev 
+            metrics_by_bias = {} #key: metric, object : Dict holding mean and stdev for bias level 'b'
+            #metrics_by_bias[metric][mean or std][b] = List of avg metrics values for bias level 'b'
+            for metric in metrics_keys :
+                if type(nk_results_dict[all_bias[0]][list(fold_keys)[0]][metric]) is not dict :
+                    i = 0
+                    metrics_by_bias[metric] = {}
+                    metrics_by_bias[metric]['mean'] = np.zeros(n) #List of mean metric values for each bias level 'b'
+                    metrics_by_bias[metric]['stdev'] = np.zeros(n) #[0]*n
+                    for b in bias_keys :
+                        values = [0]*k
+                        nan_count = 0
+                        for f in fold_keys : #k in fold nbr
+                            val = nk_results_dict[b][f][metric]
+                            values[f]= nk_results_dict[b][f][metric]
+                            if math.isnan(val):
+                                nan_count += 1
+                        if nan_count > len(fold_keys)/2 : #Too much values are nan for usefull results (post-proc has failed for more than 50% of folds)
+                            metrics_by_bias[metric]['mean'][i] = float('nan')
+                            metrics_by_bias[metric]['stdev'][i] = float('nan')
+                        else :
+                            metrics_by_bias[metric]['mean'][i] = np.mean(values)
+                            metrics_by_bias[metric]['stdev'][i] = np.std(values)
+                        i+=1
+                else :
+                    pass
+                    #TODO
 
-    if path_start is not None :
-        path = path_start+"_metricsForPlot.pkl"
-        with open(path,"wb") as file:
-            pickle.dump(metrics_by_bias,file)
-    del nk_results_dict
-    if memory_save:
-        del metrics_by_bias, all_bias
-        metrics_by_bias, all_bias = None
-    
+        if path_start is not None :
+            path = path_start+"_metricsForPlot.pkl"
+            with open(path,"wb") as file:
+                pickle.dump(metrics_by_bias,file)
+        del nk_results_dict
+        if memory_save:
+            del metrics_by_bias, all_bias
+            metrics_by_bias, all_bias = None
+        
     return metrics_by_bias, all_bias
 
-def plot_by_bias(metrics_by_bias, all_bias: list[float], plot_style: str = 'SIMPLE_PLOT', title: str = '', path_start:str = None, display=True) :
+def metrics_save_all(n_pred, n_pred_bias, nk_train_splits, path_data:str, path_results:str, clas_type:str=None, dataset_name:str=None, bias_name:str=None, sens_attr:str=None, to1=False, recompute=False) :
+    """ Compute and save all metrics in both 'original' format and suitable for plots, with biased and unbiased test set
+        Functions created to allow for the memory heavy computation to be done its own process
+        clas_type : String, optional
+            if 'tree' or 'RF', proportion of sens. attribute usage by classifiers is computed and added to results dict
+            if 'neural', sens_attr_usage is added to results dict and set to None
+            if None, sens_attr_usage is NOT added to results dict
+        dataset_name : str, optional
+            Necessary if 'clas_type' is not None, name of dataset used to trained the model for which metrics are computed
+        bias_name : str, optional
+            Necessary if 'clas_type' is not None, type of bias in the data used to trained the model for which metrics are computed
+        Returns None
     """
-    nk_results_dic : Dictionary {float: {int: {str: float}}}
-        Nested dictionaries where nk_results_dic[b][f][metric_name] = Value of 'metric_name' obtained for fold nbr 'k' of model trained with bias level 'b'
-    plot_style : string, optional
-        'ALL' for basic display of all metrics
-        'SIMPLE_PLOT' for choice of metrics displaid without standard deviation
-        'FILLED_STDEV' for choice of metrics displaid with standard deviation as colored area arround the curve
+    print("Unbiased test set")
+    all_metrics = get_all_metrics(n_pred, nk_train_splits, clas_type, dataset_name, bias_name, path_data, path_start=path_results, to1=to1, recompute=recompute)
+    metrics_for_plot(all_metrics,path_start=path_results)
+
+    if n_pred_bias is not None :
+        print("Biased test set")
+        all_metrics_biasedTest = get_all_metrics(n_pred_bias, nk_train_splits, clas_type, dataset_name, bias_name, biased_test=True, path_data=path_data, path_start=path_results, recompute=recompute)
+        path_biased = path_results+"_Biased"
+        metrics_for_plot(all_metrics_biasedTest,path_start=path_biased)
+
+def metrics_all_format(n_pred, nk_train_splits, path_data, path_results, biased_test:bool, clas_type:str=None, dataset_name:str=None, bias_name:str=None, sens_attr:str=None, to1=False, recompute=False) :
+    """ Compute and save all metrics in both 'original' format and suitable for plots, with biased and unbiased test set
+        Functions created to allow for the memory heavy computation to be done in a separate processes
+        Returns None
     """
+    all_metrics = get_all_metrics(n_pred, nk_train_splits, clas_type, dataset_name, bias_name, path_data, path_results, biased_test,to1=to1, recompute=recompute)
+    metrics_for_plot(all_metrics,path_start=path_results)
 
-    fig, ax = plt.subplots() # (figsize=(length, heigth)) #Scale size of image
-    ax.hlines(0,0,1,colors='black')
-
-    if plot_style is None :
-        for metric in metrics_keys :
-            #if metric != "DP_ratio":
-            plt.plot(all_bias,metrics_by_bias[metric],label = str(metric),linestyle="--",marker="o")
-            plt.style.use('tableau-colorblind10')
-    elif  plot_style == 'SIMPLE_PLOT' or plot_style == 'FILLED_STDEV' :
-        #Mean values
-        ax.plot(all_bias,metrics_by_bias['Consistency']['mean'], label = 'Consistency', linestyle="--",marker="o", color="#006BA4")#Cerulean/Blue
-        ax.plot(all_bias,metrics_by_bias['acc']['mean'], label = 'Accuracy', linestyle="--",marker="o", color='#595959')##Dark gray
-        ax.plot(all_bias,metrics_by_bias['FNR']['mean'], label = 'FNR global', linestyle="--",marker="s", color='#ABABAB')##Light gray #TODO FNR
-        ax.plot(all_bias,metrics_by_bias['FPR']['mean'], label = 'FPR global', linestyle="--",marker="+", color='#ABABAB')##Light gray #TODO FPR
-        #ax.plot(all_bias,metrics_by_bias['F1']['mean'], label = 'F1 score', linestyle="--",marker="o", color='#595959')##Dark gray
-        #ax.plot(all_bias,metrics_by_bias['EqqOddsDiff']['mean'], label = 'Eq. Odds', linestyle="--",marker="X", c='#C85200')#Tenne/Dark orange
-        #ax.plot(all_bias,metrics_by_bias['EqqOppDiff']['mean'], label = 'EqOpp=TPRdiff', linestyle="--",marker="d", c="#FF800E")#Pumpkin/Bright orange
-        ax.plot(all_bias,metrics_by_bias['FalsePosRateDiff']['mean'], label = 'FPRdiff', linestyle="--",marker="X", c='#C85200')#Tenne/Dark orange
-        ax.plot(all_bias,metrics_by_bias['FalseNegRateDiff']['mean'], label = 'FNRdiff', linestyle="--",marker="X", c='#FF800E')#Pumpkin/Bright orange
-        
-        ax.plot(all_bias,metrics_by_bias['StatParity']['mean'], label = 'StatParity', linestyle="--",marker="s", c="#A2C8EC")#Seil/Light blue
-        ax.plot(all_bias,metrics_by_bias['GenEntropyIndex']['mean'], label = 'GenEntropyIndex', linestyle="--",marker="^", color="#006BA4")#Cerulean/Blue
-        if plot_style == 'FILLED_STDEV':
-        #Shade for std values
-            ax.fill_between(all_bias,metrics_by_bias['Consistency']['mean'] - metrics_by_bias['Consistency']['stdev'], metrics_by_bias['Consistency']['mean'] + metrics_by_bias['Consistency']['stdev'], edgecolor = None, facecolor='#006BA4', alpha=0.4)
-            ax.fill_between(all_bias,metrics_by_bias['acc']['mean'] - metrics_by_bias['acc']['stdev'], metrics_by_bias['acc']['mean'] + metrics_by_bias['acc']['stdev'], edgecolor = None, facecolor='#595959', alpha=0.4)
-            ax.fill_between(all_bias,metrics_by_bias['FNR']['mean'] - metrics_by_bias['FNR']['stdev'], metrics_by_bias['FNR']['mean'] + metrics_by_bias['FNR']['stdev'], edgecolor = None, facecolor='#ABABAB', alpha=0.4)
-            ax.fill_between(all_bias,metrics_by_bias['FPR']['mean'] - metrics_by_bias['FPR']['stdev'], metrics_by_bias['FPR']['mean'] + metrics_by_bias['FPR']['stdev'], edgecolor = None, facecolor='#ABABAB', alpha=0.4)
-            ax.fill_between(all_bias,metrics_by_bias['FalsePosRateDiff']['mean'] - metrics_by_bias['FalsePosRateDiff']['stdev'], metrics_by_bias['FalsePosRateDiff']['mean'] + metrics_by_bias['FalsePosRateDiff']['stdev'], edgecolor = None, facecolor='#C85200', alpha=0.4)
-            #ax.fill_between(all_bias,metrics_by_bias['EqqOppDiff']['mean'] - metrics_by_bias['EqqOppDiff']['stdev'], metrics_by_bias['EqqOppDiff']['mean'] + metrics_by_bias['EqqOppDiff']['stdev'], edgecolor = None, facecolor='#FF800E', alpha=0.4)
-            ax.fill_between(all_bias,metrics_by_bias['FalseNegRateDiff']['mean'] - metrics_by_bias['FalseNegRateDiff']['stdev'], metrics_by_bias['FalseNegRateDiff']['mean'] + metrics_by_bias['FalseNegRateDiff']['stdev'], edgecolor = None, facecolor='#FF800E', alpha=0.4)
-            ax.fill_between(all_bias,metrics_by_bias['StatParity']['mean'] - metrics_by_bias['StatParity']['stdev'], metrics_by_bias['StatParity']['mean'] + metrics_by_bias['StatParity']['stdev'], edgecolor = None, facecolor='#A2C8EC', alpha=0.4)
-            ax.fill_between(all_bias,metrics_by_bias['GenEntropyIndex']['mean'] - metrics_by_bias['GenEntropyIndex']['stdev'], metrics_by_bias['GenEntropyIndex']['mean'] + metrics_by_bias['GenEntropyIndex']['stdev'], edgecolor = None, facecolor='#006BA4', alpha=0.4)
-    
-    ax.tick_params(labelsize = 'large',which='major')
-    ax.set_ylim([-1.1,1.1])
-    ax.set_xlim([0,1])
-    minor_ticks = np.arange(-1,1,0.05)
-    #ax.set_yticks(minor_ticks) #, minor=True)
-    #ax.set_xlabel(r'$\tau$', size=14)
-    
-    #ax.grid(which='both',linestyle='-',linewidth=0.5,color='lightgray')
-    ax.grid(visible=True)
-    ax.grid(which='minor',linestyle=':',linewidth=0.5,color='lightgray')
-    ax.minorticks_on()
-
-    #ax.legend(loc='best')
-    ax.legend(prop={'size':10}, loc='lower left') #,  bbox_to_anchor=(1, 0.87))
-    plt.title(title, fontsize=14)
-
-    if path_start is not None :
-            plt.savefig(path_start+".pdf", format="pdf", bbox_inches="tight") # dpi=1000) #dpi changes image quality
-    if(display) :
-        plt.show()
-    plt.close()
-
-def plot_by_metric(retrieval_path:str, dataset_list=['student','OULADstem', 'OULADsocial'], metric_list=['acc','StatParity','EqqOddsDiff','GenEntropyIndex'], bias_list=['label','selectDoubleProp'],preproc_list=['', 'reweighting','massaging'],ylim:list[float]=None, xlim:list[float]=None, all_bias:list[float]=[0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9], plot_style: str = 'SIMPLE_PLOT', title: str = '', path_start:str = None, display=False) :
+def txt_nk_trees(clas_type:str, dataset:str, bias_type:str, feature_names:list[str], path_retrieval:str) :
+    """ Generate and saves textual representation of all the decision trees trained on 'dataset' with 'bias_type' (one tree for each bias level and fold)
+        dataset : String
+            name of dataset on which the trees where trained and which is used in the file name for the pickled dictionary of datasets
+        bias_type : String
+            name of bias type that was introduced in the data and which is used in the file name for the pickled dictionary of datasets
+        feature_names : List[string]
+            list of the feature_names listed in the dataset named 'dataset'
+        path_retrieval :
+            path at which the pickled file containing the dictionary of datasets can be found
     """
-    plot_style : string, optional
-        'SIMPLE_PLOT' for choice of metrics displaid without standard deviation
-        'FILLED_STDEV' for choice of metrics displaid with standard deviation as colored area arround the curve
-    """
+    path_trees = path_retrieval+dataset+'_'+bias_type+'__'+clas_type+"Aware_all.pkl"
+    try :
+        with open(path_trees,"rb") as file:
+            nk_classifier = pickle.load(file)
+    except FileNotFoundError :
+        print("WARNING The sensitive attribute usage could not be computed. Saving models on disk is necessary for this.")
+        return
+    for n in nk_classifier.keys() :
+        if n == 0 : nn = "b0.0" # Establish consistent naming style for all bias levels #TODO remove this if experiments are rerun with bias=0.0
+        else : nn = 'b'+str(n)
+        for k in nk_classifier[0].keys() :
+            clas = nk_classifier[n][k]
+            clas_names = [str(i) for i in clas.classes_]
+            file_name = "tree_"+dataset+'_'+bias_type+'_'+str(nn)+'k'+str(k)
+            if clas_type == 'tree':
+                text = export_text(clas, feature_names=feature_names,class_names=clas_names )
+                with open("data/trees/"+file_name+".txt", "w") as fout:
+                    fout.write(text)
+            elif clas_type == 'RF':
+                for i in range(len(clas.estimators_)) :
+                    est = clas.estimators_[i] #one tree composing the RF
+                    text = export_text(est, feature_names=feature_names, class_names=clas_names)
+                    with open("data/RFs/"+file_name+'i'+str(i)+".txt", "w") as fout:
+                        fout.write(text)
+            else :
+                print("WARNING Wrong tree-based classifier name. Only 'tree' and 'RF' are supported")
 
-    metrics_all = {}
-    for ds in dataset_list :
-        metrics_all[ds] = {}
+def txt_trees_all(clas_type:str, dataset_list:list[str], bias_list:list[str], path_retrieval:str, to1=False) :
+    """ Generate and saves textual representation of all the nk tree-based classifiers for all datasets, biase types and blinding types provided
+        clas_type : String
+            'tree' to represent the decision tree classifiers
+            'RF' to represent the random forest classifiers (generate all trees for each RF)
+        dataset_list : list[String]
+            list of dataset names for which the textual representation will be generated (dataset on which the trees where trained and which is used in the file name for the pickled dictionaries of datasets)
+        bias_list : list[String]
+            list of bias types for which the textual representation will be generated (bias introduced in the data and which is used in the file name for the pickled dictionary of datasets)
+        path_retrieval :
+            path at which the pickled file containing the dictionary of datasets can be found
+        to1 : Boolean
+            True to consider scenarios where the bias levels used for training go from 0 to 1 (prefix 0to1_ for file paths), False otherwise
+    """
+    if to1 : pref = '0to1_'
+    else : pref = ''
+    for dataset in dataset_list :
+        path_data = path_retrieval+dataset+"_dataset"
+        with open(path_data,"rb") as file:
+            ds_obj = pickle.load(file)
         for bias in bias_list :
-            metrics_all[ds][bias] = {}
-            for preproc in preproc_list :
-                path = retrieval_path+ds+'_'+bias+'_'+preproc+"_RFAware_metricsForPlot.pkl"
-                with open(path,"rb") as file:
-                    metrics = pickle.load(file)
-                    metrics_all[ds][bias][preproc] = metrics
-            path = retrieval_path+ds+'_'+bias+"__RFBlinded_metricsForPlot.pkl"
-            with open(path,"rb") as file:
-                metrics = pickle.load(file)
-                metrics_all[ds][bias]['FTU'] = metrics
-
-    #metrics_all[bias_type][preproc][metric]['mean']
-    for ds in dataset_list :
-        for metric in metric_list :
-            fig, ax = plt.subplots() # (figsize=(length, heigth)) #Scale size of image
-            ax.hlines(0,0,1,colors='black')
-
-            if plot_style is None :
-                for metric in metrics_keys :
-                    #if metric != "DP_ratio":
-                    plt.plot(all_bias,metrics_all[metric],label = str(metric),linestyle="--",marker="o")
-                    plt.style.use('tableau-colorblind10')
-            elif  plot_style == 'SIMPLE_PLOT' or plot_style == 'FILLED_STDEV' :
-                #Mean values
-                ax.plot(all_bias,metrics_all[ds]['label'][''][metric]['mean'], label = 'label bias', linestyle="--",marker="o", color="#595959")#Dark gray
-                ax.plot(all_bias,metrics_all[ds]['label']['reweighting'][metric]['mean'], label = 'label+reweighing', linestyle="--",marker="X", color="#006BA4")#Cerulean/Blue
-                ax.plot(all_bias,metrics_all[ds]['label']['massaging'][metric]['mean'], label = 'label+massaging', linestyle="--",marker="P", color="#A2C8EC")#Seil/Light blue
-                ax.plot(all_bias,metrics_all[ds]['label']['FTU'][metric]['mean'], label = 'label+FTU', linestyle="--",marker="D", color="#A2C8EC")#Seil/Light blue
-                ax.plot(all_bias,metrics_all[ds]['selectDoubleProp'][''][metric]['mean'], label = 'selection bias', linestyle="--",marker="s", color="#ABABAB")#Cerulean/Blue
-                ax.plot(all_bias,metrics_all[ds]['selectDoubleProp']['reweighting'][metric]['mean'], label = 'select+reweighing', linestyle="--",marker="^", color="#C85200")#Tenne/Dark orange
-                ax.plot(all_bias,metrics_all[ds]['selectDoubleProp']['massaging'][metric]['mean'], label = 'select+massaging', linestyle="--",marker="v", color="#FF800E")#Pumpkin/Bright orange
-                ax.plot(all_bias,metrics_all[ds]['selectDoubleProp']['FTU'][metric]['mean'], label = 'select+FTU', linestyle="--",marker=">", color="#FF800E")#Pumpkin/Bright orange
-                
-                if plot_style == 'FILLED_STDEV':
-                #Shade for std values
-                    ax.fill_between(all_bias,metrics_all[ds]['label'][''][metric]['mean'] - metrics_all[ds]['label'][''][metric]['stdev'], metrics_all[ds]['label'][''][metric]['mean'] + metrics_all[ds]['label'][''][metric]['stdev'], edgecolor = None, facecolor='#006BA4', alpha=0.4)
-                    ax.fill_between(all_bias,metrics_all[ds]['label']['reweighting'][metric]['mean'] - metrics_all[ds]['label']['reweighting'][metric]['stdev'], metrics_all[ds]['label']['reweighting'][metric]['mean'] + metrics_all[ds]['label']['reweighting'][metric]['stdev'], edgecolor = None, facecolor='#595959', alpha=0.4)
-                    ax.fill_between(all_bias,metrics_all[ds]['label']['massaging'][metric]['mean'] - metrics_all[ds]['label']['massaging'][metric]['stdev'], metrics_all[ds]['label']['massaging'][metric]['mean'] + metrics_all[ds]['label']['massaging'][metric]['stdev'], edgecolor = None, facecolor='#ABABAB', alpha=0.4)
-                    ax.fill_between(all_bias,metrics_all[ds]['selectDoubleProp'][''][metric]['mean'] - metrics_all[ds]['selectDoubleProp'][''][metric]['stdev'], metrics_all[ds]['selectDoubleProp'][''][metric]['mean'] + metrics_all[ds]['selectDoubleProp'][''][metric]['stdev'], edgecolor = None, facecolor='#ABABAB', alpha=0.4)
-                    ax.fill_between(all_bias,metrics_all[ds]['selectDoubleProp']['reweighting'][metric]['mean'] - metrics_all[ds]['selectDoubleProp']['reweighting'][metric]['stdev'], metrics_all[ds]['selectDoubleProp']['reweighting'][metric]['mean'] + metrics_all[ds]['selectDoubleProp']['reweighting'][metric]['stdev'], edgecolor = None, facecolor='#C85200', alpha=0.4)
-                    ax.fill_between(all_bias,metrics_all[ds]['selectDoubleProp']['massaging'][metric]['mean'] - metrics_all[ds]['selectDoubleProp']['massaging'][metric]['stdev'], metrics_all[ds]['selectDoubleProp']['massaging'][metric]['mean'] + metrics_all[ds]['selectDoubleProp']['massaging'][metric]['stdev'], edgecolor = None, facecolor='#FF800E', alpha=0.4)
-                    
-            ax.tick_params(labelsize = 'large',which='major')
-            if ylim is not None:
-                ax.set_ylim(ylim)
-            if xlim is not None :
-                ax.set_xlim(xlim)
-            #minor_ticks = np.arange(-1,1,0.05)
-            #ax.set_yticks(minor_ticks) #, minor=True)
-            #ax.set_xlabel(r'$\tau$', size=14)
-            
-            #ax.grid(which='both',linestyle='-',linewidth=0.5,color='lightgray')
-            ax.grid(visible=True)
-            ax.grid(which='minor',linestyle=':',linewidth=0.5,color='lightgray')
-            ax.minorticks_on()
-
-            #ax.legend(loc='best')
-            ax.legend(prop={'size':10}, loc='lower left') #,  bbox_to_anchor=(1, 0.87))
-            if title == '':
-                plt.title(metric+" values wrt train set bias level :\n ("+ds+", unbiased test set)" , fontsize=14)
-            else :
-                plt.title(title, fontsize=14)
-
-            if path_start is not None :
-                    plt.savefig(path_start+ds+"_"+metric+".pdf", format="pdf", bbox_inches="tight") # dpi=1000) #dpi changes image quality
-            if(display) :
-                plt.show()
-            plt.close()
+            txt_nk_trees(clas_type, dataset, bias, ds_obj.feature_names, path_retrieval+pref)
 
 
-def plot_bargraph(retrieval_path:str, dataset_list=['student','OULADstem', 'OULADsocial'], metric_list=['acc','StatParity','EqqOddsDiff','GenEntropyIndex'], bias_list=['label','selectDoubleProp'],preproc_list=['', 'reweighting','massaging'],ylim:list[float]=None, xlim:list[float]=None, all_bias:list[float]=[0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9], plot_style: str = 'SIMPLE_PLOT', title: str = '', path_start:str = None, display=False) :
+def sens_attr_usage_all(clas_type:str, dataset_list:list[str], bias_list:list[str],
+                    bias_levels:list[float], to1=False, recompute_path:str=None) :
+    """ Compute the proportion of trees that use the sensitive attribute and save the results in a dict store on disk (update the existing dict or create a new one if none exists)
+        clas_type : String
+            'tree' to represent the decision tree classifiers
+            'RF' to represent the random forest classifiers (generate all trees for each RF)
+        dataset_list : list[String]
+            list of dataset names for which the sens. attr. usage will be computed
+        bias_list : list[String]
+            list of bias types for which the sens. attr. usage will be computed
+        bias_levels : list[float]
+
+        to1 : Boolean
+            True to consider scenarios where the bias levels used for training go from 0 to 1 (prefix 0to1_ for file paths), False otherwise
+        recompute_path : String
+            None if the textual representation of the classifier to analyze is available on disk,
+            otherwise path to pickled files containing the dictionary of the corresponding datasets so the textual representation can be computed
     """
-    plot_style : string, optional
-        'SIMPLE_PLOT' for choice of metrics displaid without standard deviation
-        'FILLED_STDEV' for choice of metrics displaid with standard deviation as colored area arround the curve
-    title : string, optional
-        None for automatic title
-        '' (empty string) for no title
-    """
+    if clas_type == 'tree':
+        num_tree = 1
+    elif clas_type == 'RF':
+        num_tree = 100
+    else : print("WARNING Not a valid type of tree based classifer. clas_type must be 'tree' or 'RF'")
+    
+    if recompute_path is not None : #Generate textual representation of trees if needed
+        txt_trees_all(clas_type, dataset_list, bias_list, recompute_path, to1)
 
-    metrics_all = {}
-    for ds in dataset_list :
-        metrics_all[ds] = {}
+    try :
+        with open("data/Results/"+clas_type+"_trees_count.pkl","rb") as file:
+            results_dict = pickle.load(file)
+    except (Exception, pickle.UnpicklingError) as err:
+        results_dict = {}
+
+    for dataset in dataset_list :
+        if dataset[0:7] == "student" : sens_attr = "'sex >'"
+        elif dataset[0:5] == "OULAD" : sens_attr = "'gender >'"
+        else : print("WARNING Not a valid dataset name. Must be 'student', 'OULADsocial' or 'OULADstem'")
+        if len(results_dict.keys()) == 0: #Newly created empty dict
+            results_dict[dataset] = {}
         for bias in bias_list :
-            metrics_all[ds][bias] = {}
+            if bias in ['selectLow','selectDoubleProp','selectRandom','selectPrivNoUnpriv','selectRandomWhole'] : folds = 5
+            elif bias in ['label','labelDouble'] : folds = 10
+            else : print("WARNING Not a valid bias type")
+            results_dict[dataset][bias] = [0]*len(bias_levels)
+            i = 0
+            for b in bias_levels :
+                #for k in range(5) : # 5 folds since we only look at selection bias (file_names = "tree_"+dataset+"_"+bias+'_b'+str(b)+'k'+str(k)+'*.txt')
+                file_names = clas_type+"s/tree_"+dataset+"_"+bias+'_b'+str(b)+'*.txt'
+                process = subprocess.Popen(["grep -c "+sens_attr+" "+file_names+" | grep -v ':0' | grep -c "+dataset],shell=True,stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                stdout,stderr = process.communicate()
+                results_dict[dataset][bias][i] = int((stdout))/(folds*num_tree) # Save proportion of individual trees that use the sensitive attribute (100 trees per RF)
+                i+=1
+                # grep - c string @Count number of occurances per file
+                # cat *_student_* | grep -c "sex >" @ Count total number of occurances (Combines all files, then give to grep)
+                # grep -c "sex >" *_student_* | grep -v ":0" @ Filter out outputs lines with zero occurences of 'sex'
+                # grep -c "sex >" *_student_* | grep -v ":0" | grep -c "student" @ Counts the number of file which name contain "student" that contain an occurence of 'sex'
+    
+    with open("data/Results/"+clas_type+"s_trees_count.pkl","wb") as file:
+        pickle.dump(results_dict,file)
+    
+    return results_dict
+
+def sens_attr_usage(clas_type:str, dataset_name:str, sens_attr:str, bias_name:str, bias_level:float, fold_num:int) :
+    """ Compute the proportion of trees that use the sensitive attribute and save the results in a dict store on disk (update the existing dict or create a new one if none exists)
+        clas_type : String
+            'tree' to represent the decision tree classifiers
+            'RF' to represent the random forest classifiers (generate all trees for each RF)
+        dataset_name : String
+            name of dataset used to trained the model for which the sens. attr. usage will be computed
+        sens_attr : String
+            name of the designated sens. attr. in 'dataset'
+        bias_name : String
+           type of bias in the data used to trained the model for which the sens. attr. usage will be computed
+        bias_level : Float
+            Level of bias in the data used to trained the model for which the sens. attr. usage will be computed
+        fold_num : Integer
+            Number of the fold for the sens. attr. usage will be computed
+        to1 : Boolean
+            True to consider scenarios where the bias levels used for training go from 0 to 1 (prefix 0to1_ for file paths), False otherwise
+        recompute_path : String
+            None if the textual representation of the classifier to analyze is available on disk,
+            otherwise path to pickled files containing the dictionary of the corresponding datasets so the textual representation can be computed
+    """
+    if clas_type == 'tree': num_tree = 1
+    elif clas_type == 'RF': num_tree = 100
+    else : print("WARNING Not a valid type of tree based classifer. clas_type must be 'tree' or 'RF'")
+
+    sens_attr = "'"+sens_attr+" >'"
+    if bias_level == 0 : b = "0.0"
+    else : b = str(bias_level)
+    file_names = "data/"+clas_type+"s/tree_"+dataset_name+"_"+bias_name+"_b"+b+"k"+str(fold_num)+"*.txt" #If there is no such file, process doesn't fail
+    process = subprocess.Popen(["grep -c "+sens_attr+" "+file_names+" | grep -v ':0' | grep -c "+dataset_name],shell=True,stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    stdout,stderr = process.communicate()
+    result = int((stdout))/num_tree # Save proportion of individual trees that use the sensitive attribute (100 trees per RF)
+    
+    # grep - c string @Count number of occurances per file
+    # cat *_student_* | grep -c "sex >" @ Count total number of occurances (Combines all files, then give to grep)
+    # grep -c "sex >" *_student_* | grep -v ":0" @ Filter out outputs lines with zero occurences of 'sex'
+    # grep -c "sex >" *_student_* | grep -v ":0" | grep -c "student" @ Counts the number of file which name contain "student" that contain an occurence of 'sex'
+
+    return result
+
+def compute_all(data_list, bias_list, preproc_list, postproc_list, model_list, blinding_list, path_start, no_valid = False, to1 = False, recompute=False) :
+    """ Compute and save evaluation metrics for all combinations of datasets, bias, preproc, model and blinding given as argument
+        Dataset splits and predictions must already be saved and be store at 'path_start'
+        no_valid : Boolean
+            True if the data used to train models is split between train and test with no validation set, False if there was a validation set 
+        to1 : Boolean
+            True if the bias levels used for training go from 0 to 1 (prefix 0to1_ for file paths), False otherwise 
+        Returns None
+    """
+    if no_valid : valid = "_noValid"
+    else : valid = ''
+    if to1 : pref = "0to1_"
+    else : pref = ''
+    for ds in data_list :
+        if ds[0:7] == "student" : sens_attr = 'sex'
+        elif ds[0:5] == 'OULAD' : sens_attr = 'gender'
+        for bias in bias_list :
+            #Retrieve original (biased) data for test set
+            path = path_start+pref+ds+'_'+bias+valid
+            #Result of common split
             for preproc in preproc_list :
-                path = retrieval_path+ds+'_'+bias+'_'+preproc+"_RFAware_metricsForPlot.pkl"
-                with open(path,"rb") as file:
-                    metrics = pickle.load(file)
-                    metrics_all[ds][bias][preproc] = metrics
-            path = retrieval_path+ds+'_'+bias+"__RFBlinded_metricsForPlot.pkl"
-            with open(path,"rb") as file:
-                metrics = pickle.load(file)
-                metrics_all[ds][bias]['FTU'] = metrics
-    #metrics_all[bias_type][preproc][metric]['mean']
+                for model in model_list :
+                    for blind in blinding_list :
+                        if blind : visibility = 'Blinded'
+                        else : visibility = 'Aware'
+                        path = path_start+pref+ds+'_'+bias+valid+'_'+preproc+'_'+model+visibility
+                        if len(postproc_list) == 0 :
+                            print("\nComputing metrics for "+path)
+                            #Retrieve predictions
+                            with open(path+"_pred_all.pkl","rb") as file:
+                                n_pred = pickle.load(file)
+                            path_biased = path+"_biasedTest"
+                            with open(path_biased+"_pred_all.pkl","rb") as file:
+                                n_pred_bias = pickle.load(file)
+                            # Compute in distinct process for memory management
+                            path_res = path_start+"Results/"+pref+ds+'_'+bias+valid+'_'+preproc+'_'+model+visibility+'_'
+                            proc1 = mp.Process(target = metrics_all_format, args=(n_pred['pred'], n_pred['orig'], path_start, path_res, False, model, ds, bias,sens_attr,to1,recompute))
+                            proc1.start()
+                            proc1.join()
+                            path_res_biased = path_res+"_Biased"
+                            proc1 = mp.Process(target = metrics_all_format, args=(n_pred_bias['pred'], n_pred_bias['orig'], path_start, path_res_biased, True, model, ds, bias,sens_attr,to1,recompute))
+                            proc1.start()
+                            proc1.join()
+                            del n_pred, n_pred_bias
+                        else :
+                            for post_proc in postproc_list :
+                                print("\nComputing metrics for "+path)
+                                #Retrieve predictions
+                                path = path_start+pref+ds+'_'+bias+valid+'_'+preproc+'_'+model+visibility+'_'+post_proc
+                                path_biasedValidFairTest = path+"-BiasedValidFairTest"
+                                path_biasedValidBiasedTest = path+"-BiasedValidBiasedTest"
+                                #path_fairValidFairTest = path+"-FairValidFairTest"
+                                with open(path_biasedValidFairTest+"_n.pkl","rb") as file:
+                                    n_pred_transf_biasedValidFairTest = pickle.load(file)
+                                with open(path_biasedValidBiasedTest+"_n.pkl","rb") as file:
+                                    n_pred_transf_biasedValidBiasedTest = pickle.load(file)
+                                #with open(path_fairValidFairTest+"_n.pkl","rb") as file:
+                                #    n_pred_transf_FairValidFairTest = pickle.load(file)
+                                # Compute in distinct process for memory management
+                                path_res = path_start+"Results/"+pref+ds+'_'+bias+valid+'_'+preproc+'_'+model+visibility+'_'+post_proc
+                                path_res_biasedValidFairTest = path_res+"-BiasedValidFairTest"
+                                path_res_biasedValidBiasedTest = path_res+"-BiasedValidBiasedTest"
+                                #path_res_fairValidFairTest = path_res+"-FairValidFairTest"
+                                proc = mp.Process(target = metrics_all_format, args=(n_pred_transf_biasedValidFairTest['pred'], n_pred_transf_biasedValidFairTest['orig'], path_start, path_res_biasedValidFairTest, False, model, ds, bias, recompute))
+                                proc.start()
+                                proc.join()
+                                proc = mp.Process(target = metrics_all_format, args=(n_pred_transf_biasedValidBiasedTest['pred'], n_pred_transf_biasedValidBiasedTest['orig'], path_start, path_res_biasedValidBiasedTest, True, model, ds, bias, recompute))
+                                proc.start()
+                                proc.join()
+                                #proc = mp.Process(target = metrics_all_format, args=(n_pred_transf_FairValidFairTest['pred'], n_pred_transf_FairValidFairTest['orig'], path_start, path_res_fairValidFairTest, False, model, ds, bias))
+                                #proc.start()
+                                #proc.join()
+                                del n_pred_transf_biasedValidFairTest, n_pred_transf_biasedValidBiasedTest#, n_pred_transf_FairValidFairTest
+                                gc.collect()
+                        gc.collect()
+            gc.collect()
 
-    for ds in dataset_list :
-        #for bias in bias_list:
-        for metric in metric_list :
-            fig, ax = plt.subplots() # (figsize=(length, heigth)) #Scale size of image
-            ax.hlines(y=0,xmin=-0.05,xmax=1,colors='black')
-
-            #HERE
-            bar_width = 0.01
-            # Positions des barres
-            #indices = np.arange(len(all_bias))
-            indices = np.array(all_bias)
-            #indices = np.arange(0, 1.0, 0.1)
-
-            if plot_style is None :
-                for metric in metrics_keys :
-                    #if metric != "DP_ratio":
-                    plt.plot(all_bias,metrics_all[metric],label = str(metric),linestyle="--",marker="o")
-                    plt.style.use('tableau-colorblind10')
-            elif  plot_style == 'SIMPLE_PLOT' or plot_style == 'FILLED_STDEV' :
-                #Mean values
-                #ax.plot(indices,metrics_all[ds]['label'][''][metric]['mean'], label = 'label bias', linestyle="--",marker="o", color="#595959")#Dark gray
-                #ax.bar(indices - 1.5*bar_width,metrics_all[ds][bias][''][metric]['mean'], label = 'label bias', width=bar_width,color="#595959")#Dark gray
-                #ax.bar(indices - 0.5*bar_width,metrics_all[ds][bias]['reweighting'][metric]['mean'], label = 'label+reweighing', width=bar_width, color="#006BA4")#Cerulean/Blue
-                #ax.bar(indices + 0.5*bar_width,metrics_all[ds][bias]['massaging'][metric]['mean'], label = 'label+massaging', width=bar_width, color="#FF800E")#Pumpkin/Bright orange
-                #ax.bar(indices + 1.5*bar_width,metrics_all[ds][bias]['FTU'][metric]['mean'], label = 'label+FTU', width=bar_width, color="#A2C8EC")#Seil/Light blue
-                ax.bar(indices - 3.6*bar_width,metrics_all[ds]['label'][''][metric]['mean'], label = 'label bias', width=bar_width,color="#595959")#Dark gray
-                ax.bar(indices - 2.6*bar_width,metrics_all[ds]['label']['reweighting'][metric]['mean'], label = 'label+reweighing', width=bar_width, color="#006BA4")#Cerulean/Blue
-                ax.bar(indices - 1.6*bar_width,metrics_all[ds]['label']['massaging'][metric]['mean'], label = 'label+massaging', width=bar_width, color="#5F9ED1")#Picton blue
-                ax.bar(indices - 0.6*bar_width,metrics_all[ds]['label']['FTU'][metric]['mean'], label = 'label+FTU', width=bar_width, color="#A2C8EC")#Seil/Light blue
-
-                ax.bar(indices + 0.6*bar_width,metrics_all[ds]['selectDoubleProp'][''][metric]['mean'], label = 'selection bias', width=bar_width, color="#898989")#Suva Grey
-                ax.bar(indices + 1.6*bar_width,metrics_all[ds]['selectDoubleProp']['reweighting'][metric]['mean'], label = 'select+reweighing', width=bar_width, color="#C85200")#Tenne/Dark orange
-                ax.bar(indices + 2.6*bar_width,metrics_all[ds]['selectDoubleProp']['massaging'][metric]['mean'], label = 'select+massaging', width=bar_width, color="#FF800E")#Pumpkin/Bright orange
-                ax.bar(indices + 3.6*bar_width,metrics_all[ds]['selectDoubleProp']['FTU'][metric]['mean'], label = 'select+FTU', width=bar_width, color="#FFBC79")#Mac and cheese orange
-                """
-                if plot_style == 'FILLED_STDEV':
-                #Shade for std values
-                    ax.fill_between(all_bias,metrics_all[ds]['label'][''][metric]['mean'] - metrics_all[ds]['label'][''][metric]['stdev'], metrics_all[ds]['label'][''][metric]['mean'] + metrics_all[ds]['label'][''][metric]['stdev'], edgecolor = None, facecolor='#006BA4', alpha=0.4)
-                    ax.fill_between(all_bias,metrics_all[ds]['label']['reweighting'][metric]['mean'] - metrics_all[ds]['label']['reweighting'][metric]['stdev'], metrics_all[ds]['label']['reweighting'][metric]['mean'] + metrics_all[ds]['label']['reweighting'][metric]['stdev'], edgecolor = None, facecolor='#595959', alpha=0.4)
-                    ax.fill_between(all_bias,metrics_all[ds]['label']['massaging'][metric]['mean'] - metrics_all[ds]['label']['massaging'][metric]['stdev'], metrics_all[ds]['label']['massaging'][metric]['mean'] + metrics_all[ds]['label']['massaging'][metric]['stdev'], edgecolor = None, facecolor='#ABABAB', alpha=0.4)
-                    ax.fill_between(all_bias,metrics_all[ds]['selectDoubleProp'][''][metric]['mean'] - metrics_all[ds]['selectDoubleProp'][''][metric]['stdev'], metrics_all[ds]['selectDoubleProp'][''][metric]['mean'] + metrics_all[ds]['selectDoubleProp'][''][metric]['stdev'], edgecolor = None, facecolor='#ABABAB', alpha=0.4)
-                    ax.fill_between(all_bias,metrics_all[ds]['selectDoubleProp']['reweighting'][metric]['mean'] - metrics_all[ds]['selectDoubleProp']['reweighting'][metric]['stdev'], metrics_all[ds]['selectDoubleProp']['reweighting'][metric]['mean'] + metrics_all[ds]['selectDoubleProp']['reweighting'][metric]['stdev'], edgecolor = None, facecolor='#C85200', alpha=0.4)
-                    ax.fill_between(all_bias,metrics_all[ds]['selectDoubleProp']['massaging'][metric]['mean'] - metrics_all[ds]['selectDoubleProp']['massaging'][metric]['stdev'], metrics_all[ds]['selectDoubleProp']['massaging'][metric]['mean'] + metrics_all[ds]['selectDoubleProp']['massaging'][metric]['stdev'], edgecolor = None, facecolor='#FF800E', alpha=0.4)
-                """
-            ax.tick_params(labelsize = 'large',which='major')
-            if ylim is not None:
-                ax.set_ylim(ylim)
-            else :
-                if metric == 'acc':
-                    ax.set_ylim([0.4,1])
-            ax.set_xlim([-0.05,0.95])
-            #ax.set_xlabel("Bias intensity ("+r'$\beta_m$'+" for label, "+r"$p_u"+" for selection)", size=14)
-            ax.set_xlabel('Bias intensity ($\\beta_m$ for label, $p_u$ for selection)', size=14)
-            if ds == 'student':
-                if metric == 'acc':
-                    y_label = "Accuracy"
-                elif metric == 'StatParity':
-                    y_label = "Statistical Parity Diff."
-                elif metric == 'EqqOddsDiff':
-                    y_label = "Equalized Odds Diff."
-                elif metric == 'GenEntropyIndex':
-                    y_label = "Generalized Entropy Ind."
-                else :
-                    y_label = metric
-                ax.set_ylabel(y_label, size = 22)
-
-            #minor_ticks = np.arange(-1,1,0.05)
-            #ax.set_yticks(minor_ticks) #, minor=True)
-            #ax.set_xticks(all_bias)  # Set x-ticks to all_bias values
-            #ax.set_xticklabels(['0','0.2','0.4','0.6','0.8'])
-            
-            #ax.grid(which='both',linestyle='-',linewidth=0.5,color='lightgray')
-            #ax.grid(visible=True)
-            ax.grid(which='minor',linestyle=':',linewidth=0.5,color='lightgray')
-            ax.minorticks_on()
-            
-            if metric == 'acc':
-                ax.legend(loc='lower left') 
-            elif metric == 'GenEntropyIndex' and ds == 'OULADsocial':
-                ax.legend(loc='lower left')
-            else :
-                ax.legend(loc='best')
-
-            #ax.legend(prop={'size':10}, loc='lower left') #,  bbox_to_anchor=(1, 0.87))
-            if title is None:
-                plt.title(metric+" values wrt train set bias level :\n ("+ds+", unbiased test set)" , fontsize=14)
-            elif title != '' :
-                plt.title(title, fontsize=14)
-
-            if path_start is not None :
-                    plt.savefig(path_start+ds+"_"+metric+".pdf", format="pdf", bbox_inches="tight") # dpi=1000) #dpi changes image quality
-            if(display) :
-                plt.show()
-            plt.close()
